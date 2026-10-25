@@ -88,7 +88,7 @@ object G {
             gravity = android.view.Gravity.CENTER
             setTextColor(fgColor)
             setPadding(dp(c, 20), dp(c, 12), dp(c, 20), dp(c, 12))
-            val shadow = GradientDrawable().apply { setColor(0xFF000000); cornerRadius = dp(c, radiusDp).toFloat() }
+            val shadow = GradientDrawable().apply { setColor(0xFF000000.toInt()); cornerRadius = dp(c, radiusDp).toFloat() }
             val face = GradientDrawable().apply { setColor(bgColor); cornerRadius = dp(c, radiusDp).toFloat() }
             val inset = G.dp(c, 3)
             background = LayerDrawable(arrayOf(shadow, face)).apply {

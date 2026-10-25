@@ -948,11 +948,13 @@ class MainActivity : Activity() {
         if (!forShop || cfg == null || !adsReady) { slot.visibility = View.GONE; return }
         try {
             val ad = com.google.android.gms.ads.AdView(this)
-            // some SDK bindings expose adUnitId getter-only — reflect the setter
-            // (present at bytecode level) and hide the banner if it ever vanishes
-            val m = com.google.android.gms.ads.AdView::class.java.getMethod("setAdUnitId", String::class.java)
-            m.invoke(ad, cfg.optString("bannerId", ""))
-            ad.adSize = com.google.android.gms.ads.AdSize.BANNER
+            // this SDK binding exposes adSize/adUnitId as getter-only — reflect
+            // the setters (present at bytecode level); any miss hides the banner
+            val cls = com.google.android.gms.ads.AdView::class.java
+            cls.getMethod("setAdSize", com.google.android.gms.ads.AdSize::class.java)
+                .invoke(ad, com.google.android.gms.ads.AdSize.BANNER)
+            cls.getMethod("setAdUnitId", String::class.java)
+                .invoke(ad, cfg.optString("bannerId", ""))
             ad.loadAd(com.google.android.gms.ads.AdRequest.Builder().build())
             slot.addView(ad)
             slot.visibility = View.VISIBLE
