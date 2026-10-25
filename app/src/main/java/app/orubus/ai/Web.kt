@@ -262,8 +262,9 @@ object W {
                     val rect = android.graphics.RectF(cx - r, cy - r, cx + r, cy + r)
                     canvas.drawArc(rect, -70f, 290f, false, stroke)
                     // arrowhead at the arc's end (top-right, pointing outward)
-                    val ax = cx + r * Math.cos(Math.toRadians(-70f + 290f)).toFloat()
-                    val ay = cy + r * Math.sin(Math.toRadians(-70f + 290f)).toFloat()
+                    val rad = Math.toRadians(-70.0 + 290.0)
+                    val ax = cx + r * Math.cos(rad).toFloat()
+                    val ay = cy + r * Math.sin(rad).toFloat()
                     canvas.drawLine(ax, ay, ax - s * 0.16f, ay - s * 0.05f, stroke)
                     canvas.drawLine(ax, ay, ax + s * 0.02f, ay - s * 0.17f, stroke)
                 }

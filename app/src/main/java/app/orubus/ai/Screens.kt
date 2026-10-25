@@ -763,7 +763,6 @@ internal fun MainActivity.maybeAppOpenAd() {
                             if (calling || sending) return
                             ad.fullScreenContentCallback = object : com.google.android.gms.ads.FullScreenContentCallback() {
                                 override fun onAdDismissedFullScreenContent() { /* fresh load next time */ }
-                                override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.FullScreenContentError) {}
                             }
                             Store.prefs().edit().putLong("appopen_at", System.currentTimeMillis()).apply()
                             try { ad.show(this@maybeAppOpenAd) } catch (_: Exception) {}
