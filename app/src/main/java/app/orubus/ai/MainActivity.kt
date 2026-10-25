@@ -725,7 +725,7 @@ class MainActivity : Activity() {
     ): AlertDialog {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = W.shadowed(this, W.theme.bg, 16, 3)
+            background = W.shadowed(this@MainActivity, W.theme.bg, 16, 3)
             setPadding(dp(18), dp(16), dp(18), dp(14))
         }
         card.addView(W.label(this, title, 17f, W.theme.ink, heavy = 2))
