@@ -205,10 +205,43 @@ object Api {
         post("solve", mapOf("challenge" to challenge))
     } catch (_: Exception) { null }
 
-    /** adtoken → mint a rewarded-ad nonce. */
-    fun adToken(): String? = try {
+    /**
+     * adtoken → mint a rewarded-ad nonce, with the server's own words when
+     * it can't. A dead button that says nothing taught nobody anything: the
+     * toast now carries the real reason (ads off / not the signed build /
+     * store hiccup / no connection).
+     */
+    data class AdStart(val nonce: String?, val error: String?)
+
+    fun adStart(): AdStart = try {
         val r = post("adtoken")
-        if (r.optBoolean("ok", false)) r.optString("nonce") else null
+        if (r.optBoolean("ok", false)) AdStart(r.optString("nonce"), null)
+        else AdStart(null, r.optString("error", "couldn't start the ad — try again in a moment"))
+    } catch (e: Exception) {
+        AdStart(null, if (isNetErr(e)) "no connection right now — try again when you're back online" else "couldn't reach the ad desk — try again in a moment")
+    }
+
+    /** True when the exception is the network's fault, not the server's. */
+    fun isNetErr(e: Exception): Boolean {
+        var c: Throwable? = e
+        repeat(4) {
+            val cur = c ?: return false
+            if (cur is java.net.UnknownHostException || cur is java.net.ConnectException ||
+                cur is java.net.SocketTimeoutException || cur is java.net.SocketException
+            ) return true
+            if (cur.message?.contains("Unable to resolve host", ignoreCase = true) == true) return true
+            c = cur.cause
+        }
+        return false
+    }
+
+    /**
+     * appimg — the server's own picture lane: when the device vision lane
+     * slips, the turn doesn't die anymore, the server understands the photo
+     * (same soul, same memory) and answers. Billed + refunded server-side.
+     */
+    fun appImg(text: String, imgB64: String, tier: String): JSONObject? = try {
+        post("appimg", mapOf("text" to text, "img" to imgB64, "tier" to tier))
     } catch (_: Exception) { null }
 
     /**

@@ -1072,19 +1072,30 @@ class MainActivity : Activity() {
                         DuckEngine.chat(msgs, DuckEngine.modelFor(tier))
                     } catch (de: Exception) {
                         // the device lane slipped — the units go straight back first,
-                        // then the server's own brain takes the turn, so chatting
-                        // never dies: same memory, same soul, one more hop
+                        // then the server takes the turn, so chatting never dies:
+                        // same memory, same soul, one more hop. Pictures included
+                        // now — the server's own vision lane understands the photo
+                        // when the device lane can't.
                         if (de is DuckEngine.NetworkDeadException) throw de
                         if (linked && token.isNotBlank()) {
                             val tok = token
                             Thread { Api.appFail(tok) }.start()
                             token = ""
                         }
-                        if (!linked || imgBase64 != null) throw de
-                        val fb = Api.post("msg", mapOf("text" to text, "tier" to tier))
-                        runOnUiThread { fb.optJSONObject("wallet")?.let { renderWallet(it) } }
-                        if (!fb.optBoolean("ok", false)) throw Exception(fb.optString("error", "the lane is catching its breath"))
-                        fb.optString("answer", "")
+                        if (!linked) throw de
+                        if (imgBase64 != null) {
+                            val fb = Api.appImg(text, imgBase64, tier)
+                            runOnUiThread { fb?.optJSONObject("wallet")?.let { renderWallet(it) } }
+                            if (fb == null || !fb.optBoolean("ok", false)) {
+                                throw Exception(fb?.optString("error", "the picture lane is catching its breath") ?: "the picture lane is catching its breath")
+                            }
+                            fb.optString("answer", "")
+                        } else {
+                            val fb = Api.post("msg", mapOf("text" to text, "tier" to tier))
+                            runOnUiThread { fb.optJSONObject("wallet")?.let { renderWallet(it) } }
+                            if (!fb.optBoolean("ok", false)) throw Exception(fb.optString("error", "the lane is catching its breath"))
+                            fb.optString("answer", "")
+                        }
                     }
                 }
                 val doneToken = token

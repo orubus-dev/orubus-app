@@ -688,18 +688,26 @@ internal fun MainActivity.watchAd() {
     Toast.makeText(this, "loading the ad…", Toast.LENGTH_SHORT).show()
     Thread {
         val cfg = try { Api.adConfig() } catch (_: Exception) { null }
+        if (cfg == null) {
+            runOnUiThread { Toast.makeText(this, "ads aren't on right now", Toast.LENGTH_SHORT).show() }
+            return@Thread
+        }
+        // the ad desk gets TWO tries — a store hiccup on the server is a
+        // pacing problem, not a dead end; the toast carries the real reason
+        var start = Api.adStart()
+        if (start.nonce == null) {
+            try { Thread.sleep(900) } catch (_: InterruptedException) {}
+            start = Api.adStart()
+        }
+        if (start.nonce == null) {
+            val why = start.error ?: "couldn't start an ad — try again in a moment"
+            runOnUiThread { Toast.makeText(this, why, Toast.LENGTH_LONG).show() }
+            return@Thread
+        }
+        val nonce = start.nonce
+        val reward = cfg.optInt("reward", 20)
+        val unitId = cfg.optString("rewarded", cfg.optString("rewardedId", ""))
         runOnUiThread {
-            if (cfg == null) {
-                Toast.makeText(this, "ads aren't on right now", Toast.LENGTH_SHORT).show()
-                return@runOnUiThread
-            }
-            val nonce = Api.adToken()
-            if (nonce.isNullOrBlank()) {
-                Toast.makeText(this, "couldn't start an ad — try again in a moment", Toast.LENGTH_SHORT).show()
-                return@runOnUiThread
-            }
-            val reward = cfg.optInt("reward", 50)
-            val unitId = cfg.optString("rewarded", cfg.optString("rewardedId", ""))
             try {
                 com.google.android.gms.ads.rewarded.RewardedAd.load(this, unitId,
                     com.google.android.gms.ads.AdRequest.Builder().build(),
