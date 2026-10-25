@@ -239,7 +239,8 @@ object W {
                     // a tiny photograph — frame, sun, mountains
                     val inset = s * 0.14f
                     val r = android.graphics.RectF(cx - s / 2f + inset, cy - s / 2f + inset, cx + s / 2f - inset, cy + s / 2f - inset)
-                    canvas.drawRoundRect(r, dp2(c), dp2(c), stroke)
+                    val rad = resources.displayMetrics.density * 2f
+                    canvas.drawRoundRect(r, rad, rad, stroke)
                     canvas.drawCircle(cx - s * 0.14f, cy - s * 0.12f, s * 0.055f, fill)
                     val m = Path()
                     m.moveTo(r.left + s * 0.04f, r.bottom - s * 0.05f)
@@ -256,8 +257,6 @@ object W {
                 }
             }
         }
-
-        private fun dp2(c: Context): Float = c.resources.displayMetrics.density * 2f
     }
 
     /** The progress bar — `.bar` with the `.bar i` fill. Returns (track, fill). */
