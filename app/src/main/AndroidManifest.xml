@@ -33,10 +33,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Required by the Google Mobile Ads SDK (rendering of ad activities) -->
-        <activity
-            android:name="com.google.android.gms.ads.AdActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|uiMode|screenSize|smallestScreenSize"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- AdActivity is declared by the play-services-ads SDK manifest itself —
+             declaring it here caused a manifest-merger conflict (theme). -->
     </application>
 </manifest>
