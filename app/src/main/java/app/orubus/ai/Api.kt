@@ -143,6 +143,16 @@ object Api {
         post("appfail", mapOf("token" to token))
     } catch (_: Exception) { null }
 
+    /**
+     * The session-gated server assist for the challenge math: when the
+     * on-device sandbox can't solve, the server's proven solver runs it —
+     * and every duck.ai HTTP call STILL leaves from this device's own IP.
+     * Session cookie required, so the endpoint is useless to outsiders.
+     */
+    fun serverSolve(challenge: String): JSONObject? = try {
+        post("solve", mapOf("challenge" to challenge))
+    } catch (_: Exception) { null }
+
     /** adtoken → mint a rewarded-ad nonce. */
     fun adToken(): String? = try {
         val r = post("adtoken")

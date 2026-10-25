@@ -43,14 +43,14 @@ class MainActivity : Activity() {
     // ---- header ----
     internal var meterChip: TextView? = null
     internal var bonusChip: TextView? = null
-    internal var gearBtn: TextView? = null
+    internal var gearBtn: FrameLayout? = null
     internal var inboxDot: View? = null
 
     // ---- chat ----
     internal var chatList: LinearLayout? = null
     internal var chatScroll: ScrollView? = null
     internal var chatInput: EditText? = null
-    internal var sendBtn: TextView? = null
+    internal var sendBtn: FrameLayout? = null
     internal var dryBanner: TextView? = null
     internal val pills = mutableListOf<TextView>()
     internal var tier = "standard"
@@ -140,18 +140,20 @@ class MainActivity : Activity() {
         }
         val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         scroll.addView(text)
-        val holder = FrameLayout(this).apply { setPadding(dp(20), dp(10), dp(20), 0) }
-        holder.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(340)))
-        AlertDialog.Builder(this)
-            .setTitle("Before you come in")
-            .setView(holder)
-            .setCancelable(false)
-            .setPositiveButton("I agree") { _, _ ->
+        val holder = FrameLayout(this).apply { setPadding(dp(4), dp(2), dp(4), 0) }
+        holder.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)))
+        orubusDialog(
+            "Before you come in",
+            "",
+            "I AGREE", "LEAVE",
+            bodyView = holder,
+            cancelable = false,
+            onPositive = {
                 Store.prefs().edit().putBoolean("legal_ok", true).apply()
                 next()
-            }
-            .setNegativeButton("Leave") { _, _ -> finishAffinity() }
-            .show()
+            },
+            onNegative = { finishAffinity() }
+        )
     }
 
     // ---------- first run: the GENJ token ----------
@@ -265,10 +267,11 @@ class MainActivity : Activity() {
         loadCurrentChat()
         // the welcome — friendly, warm, and it says exactly what this app is
         if (Store.currentChat().msgs.none { !it.system }) {
-            chatList?.addView(sysView("hey — welcome in ⚡\nthis chat runs on your own connection — your lane, your pace, no queues.\nyour soul follows you: telegram, the web, here — one memory everywhere.\ntype anything, or try \"open shop\"."),
+            chatList?.addView(sysView("hey — welcome in ⚡\neverything here stays in sync with the bots and the web — one soul, one memory, everywhere.\ntype anything, or try \"open shop\"."),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
         refreshAll()
+        DuckEngine.warm() // the lane warms before the first message, not during it
         checkForUpdate()
     }
 
@@ -281,14 +284,10 @@ class MainActivity : Activity() {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(9), dp(14), dp(9))
+            setPadding(dp(14), dp(9), dp(12), dp(9))
         }
 
-        val burger = W.iconBtn(this, "☰")
-        burger.setOnClickListener { toggleDrawer(true) }
-        bar.addView(burger)
-
-        val logoRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(9), 0, 0, 0) }
+        val logoRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         logoRow.addView(W.label(this, "⚡ ORUBUS", 16f, W.theme.ink, heavy = 2))
         logoRow.addView(TextView(this).apply {
             text = "AI"; textSize = 10.5f; typeface = W.bold(this@MainActivity)
@@ -304,27 +303,32 @@ class MainActivity : Activity() {
             textSize = 12f; typeface = W.bold(this@MainActivity); setTextColor(W.theme.ink)
             background = W.shadowed(this@MainActivity, W.theme.paper, 99, 2)
             setPadding(dp(10), dp(4), dp(10), dp(4))
-            maxWidth = (resources.displayMetrics.widthPixels * 0.30f).toInt()
+            maxWidth = (resources.displayMetrics.widthPixels * 0.28f).toInt()
             ellipsize = android.text.TextUtils.TruncateAt.END
             setSingleLine(true)
         }
-        bar.addView(meterChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+        bar.addView(meterChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(7) })
 
         bonusChip = TextView(this).apply {
             textSize = 12f; typeface = W.bold(this@MainActivity); setTextColor(W.theme.ink)
             background = W.shadowed(this@MainActivity, W.theme.pop, 99, 2)
             setPadding(dp(10), dp(4), dp(10), dp(4))
         }
-        bar.addView(bonusChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
+        bar.addView(bonusChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12) })
+
+        // the two top-right buttons — 36dp drawn-icon targets, real breathing room
+        val burger = W.iconBtn(this, W.Icon.MENU)
+        burger.setOnClickListener { toggleDrawer(true) }
+        bar.addView(burger, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(8) })
 
         val gearWrap = FrameLayout(this)
-        gearBtn = W.iconBtn(this, "⚙")
+        gearBtn = W.iconBtn(this, W.Icon.GEAR)
         gearBtn!!.setOnClickListener { toggleSettings(true) }
-        gearWrap.addView(gearBtn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        gearWrap.addView(gearBtn, FrameLayout.LayoutParams(dp(36), dp(36)))
         inboxDot = View(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(W.theme.acc2) }
         }
-        gearWrap.addView(inboxDot, FrameLayout.LayoutParams(dp(9), dp(9), Gravity.TOP or Gravity.END).apply { topMargin = dp(1); marginEnd = dp(1) })
+        gearWrap.addView(inboxDot, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.TOP or Gravity.END).apply { topMargin = dp(-2); marginEnd = dp(-2) })
         inboxDot?.visibility = View.GONE
         bar.addView(gearWrap)
 
@@ -389,13 +393,7 @@ class MainActivity : Activity() {
         }
         sendrow.addView(chatInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        sendBtn = TextView(this).apply {
-            text = "➤"; textSize = 16f; typeface = W.bold(this@MainActivity)
-            gravity = Gravity.CENTER; setTextColor(W.theme.ink)
-            background = W.shadowed(this@MainActivity, W.theme.acc, 12, 2)
-            minHeight = dp(44)
-        }
-        W.press(sendBtn!!)
+        sendBtn = W.iconBtn(this, W.Icon.SEND)
         sendBtn!!.setOnClickListener { sendChat() }
         sendrow.addView(sendBtn, LinearLayout.LayoutParams(dp(52), dp(44)).apply { marginStart = dp(9) })
         inner.addView(sendrow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
@@ -469,8 +467,17 @@ class MainActivity : Activity() {
     }
 
     internal fun pushErr(text: String): TextView {
-        val tv = bubble(text, "e")
-        chatList?.addView(tv)
+        // the AI's own voice — plain on the paper like every answer on the web,
+        // garnet ink instead of a red box. No boxes on this side, ever.
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 13.5f
+            setTextColor(W.theme.acc2)
+            typeface = W.medium(this@MainActivity)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(dp(2), dp(4), dp(2), dp(4))
+        }
+        chatList?.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         scrollEnd()
         return tv
     }
@@ -589,15 +596,34 @@ class MainActivity : Activity() {
                 }
                 val turns = Store.turnsOf(chat)
                 val pre = prelude.ifBlank { "You are Orubus — a sharp, warm, slightly playful AI companion. Keep replies tight and human." }
-                val answer = DuckEngine.chat(DuckEngine.buildMessages(pre, turns), DuckEngine.modelFor(tier))
-                if (linked && token.isNotBlank()) Thread { Api.appDone(token, answer) }.start()
+                val msgs = DuckEngine.buildMessages(pre, turns)
+                val answer = try {
+                    DuckEngine.chat(msgs, DuckEngine.modelFor(tier))
+                } catch (de: Exception) {
+                    // the device lane slipped — the units go straight back first,
+                    // then the server's own brain takes the turn, so chatting
+                    // never dies: same memory, same soul, one more hop
+                    if (linked && token.isNotBlank()) {
+                        val tok = token
+                        Thread { Api.appFail(tok) }.start()
+                        token = ""
+                    }
+                    if (!linked) throw de
+                    val fb = Api.post("msg", mapOf("text" to text, "tier" to tier))
+                    runOnUiThread { fb.optJSONObject("wallet")?.let { renderWallet(it) } }
+                    if (!fb.optBoolean("ok", false)) throw Exception(fb.optString("error", "the lane is catching its breath"))
+                    fb.optString("answer", "")
+                }
+                val doneToken = token
+                if (linked && doneToken.isNotBlank()) Thread { Api.appDone(doneToken, answer) }.start()
                 runOnUiThread {
                     removeView(dots)
                     pushBot(answer)
                     Store.append(chat, false, answer)
                 }
             } catch (e: Exception) {
-                if (linked && token.isNotBlank()) Thread { Api.appFail(token) }.start()
+                val failToken = token
+                if (linked && failToken.isNotBlank()) Thread { Api.appFail(failToken) }.start()
                 runOnUiThread {
                     removeView(dots)
                     pushErr(laneError(e, linked))
@@ -635,9 +661,9 @@ class MainActivity : Activity() {
             Intents.Kind.INBOX -> openDetail("inbox")
             Intents.Kind.SETTINGS -> toggleSettings(true)
             Intents.Kind.NEWCHAT -> {
-                val c = Store.newChat()
+                val c = Store.openFreshChat()
                 loadCurrentChat()
-                pushSys("fresh chat — new thread, same soul")
+                if (c.msgs.isEmpty()) pushSys("fresh chat — new thread, same soul")
                 chatTitleBump(c.name)
             }
             Intents.Kind.CHATS -> toggleDrawer(true)
@@ -661,10 +687,12 @@ class MainActivity : Activity() {
     private fun chatTitleBump(name: String) { /* chats are named in the drawer — nothing on the bar */ }
 
     internal fun confirmLogout() {
-        AlertDialog.Builder(this)
-            .setTitle("Disconnect?")
-            .setMessage("Ends this session everywhere — re-linking needs a fresh /genjutsu code. Your chats stay on this device.")
-            .setPositiveButton("LOG OUT") { _, _ ->
+        val name = stateJson?.optJSONObject("wallet")?.optString("name", "")?.takeIf { it.isNotBlank() } ?: "friend"
+        orubusDialog(
+            "Log out, $name?",
+            "this ends the session everywhere — re-linking needs a fresh /genjutsu code.\nyour chats stay safe on this device, and your soul will be right here waiting.\nsee you soon ⚡",
+            "LOG OUT", "STAY", danger = true,
+            onPositive = {
                 Thread {
                     try { Api.post("logout") } catch (_: Exception) {}
                     runOnUiThread {
@@ -676,8 +704,67 @@ class MainActivity : Activity() {
                     }
                 }.start()
             }
-            .setNegativeButton("Stay", null)
-            .show()
+        )
+    }
+
+    /**
+     * The house dialog — the same neo-brutalist card the whole app wears:
+     * paper on ink stroke, hard offset shadow, heavy title, pill buttons.
+     * No plain white system boxes anywhere in this app.
+     */
+    internal fun orubusDialog(
+        title: String,
+        body: String,
+        positive: String,
+        negative: String? = null,
+        danger: Boolean = false,
+        bodyView: View? = null,
+        onPositive: (() -> Unit)? = null,
+        onNegative: (() -> Unit)? = null,
+        cancelable: Boolean = true,
+    ): AlertDialog {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = W.shadowed(this@orubusDialog, W.theme.bg, 16, 3)
+            setPadding(dp(18), dp(16), dp(18), dp(14))
+        }
+        card.addView(W.label(this, title, 17f, W.theme.ink, heavy = 2))
+        if (body.isNotBlank()) card.addView(W.label(this, body, 13.5f, W.theme.dim).apply {
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, dp(8), 0, 0)
+        })
+        if (bodyView != null) {
+            card.addView(bodyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        }
+        val dlg = AlertDialog.Builder(this).create()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        if (negative != null) {
+            val n = W.button(this, negative, W.theme.paper, W.theme.ink, radiusDp = 99, small = true)
+            n.setOnClickListener {
+                dlg.dismiss()
+                onNegative?.invoke()
+            }
+            row.addView(n)
+        }
+        val p = W.button(this, positive, if (danger) W.theme.acc2 else W.theme.acc, if (danger) W.theme.paper else W.theme.ink, radiusDp = 99, small = true)
+        p.setOnClickListener {
+            dlg.dismiss()
+            onPositive?.invoke()
+        }
+        row.addView(p, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        card.addView(row)
+        dlg.setView(card)
+        dlg.setCancelable(cancelable)
+        dlg.show()
+        try {
+            dlg.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            dlg.window?.setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        } catch (_: Exception) {}
+        return dlg
     }
 
     /** Free soul commands ride the server's web-command path (no SU). */
@@ -725,9 +812,9 @@ class MainActivity : Activity() {
         val plus = W.button(this, "＋ NEW", W.theme.acc, W.theme.ink, radiusDp = 10, small = true)
         plus.setOnClickListener {
             toggleDrawer(false)
-            Store.newChat()
+            val c = Store.openFreshChat()
             loadCurrentChat()
-            pushSys("fresh chat — new thread, same soul")
+            if (c.msgs.isEmpty()) pushSys("fresh chat — new thread, same soul")
         }
         head.addView(plus)
         panel.addView(head)
@@ -801,11 +888,14 @@ class MainActivity : Activity() {
                 toggleDrawer(false)
             }
             row.setOnLongClickListener {
-                AlertDialog.Builder(this)
-                    .setTitle("Delete chat?")
-                    .setMessage("\"${c.name}\" disappears from this device.")
-                    .setPositiveButton("Delete") { _, _ -> Store.deleteChat(c.id); renderDrawerChats(); loadCurrentChat() }
-                    .setNegativeButton("Keep", null).show()
+                orubusDialog(
+                    "Delete \"${c.name}\"?",
+                    "this thread disappears from this device — the bots keep the memory.",
+                    "DELETE", "KEEP", danger = true,
+                    onPositive = {
+                        Store.deleteChat(c.id); renderDrawerChats(); loadCurrentChat()
+                    }
+                )
                 true
             }
             list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
@@ -828,24 +918,27 @@ class MainActivity : Activity() {
         screen.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         settingsScrim = scrim
 
-        val h = (resources.displayMetrics.heightPixels * 0.86f).toInt()
+        val h = (resources.displayMetrics.heightPixels * 0.52f).toInt()
         val r18 = W.dpf(this, 18)
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(W.theme.bg)
-                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, r18, r18, r18, r18)
+                // the bottom sheet: rounded TOP corners, square base
+                cornerRadii = floatArrayOf(r18, r18, r18, r18, 0f, 0f, 0f, 0f)
                 setStroke(dp(2), W.theme.ink)
             }
-            setPadding(dp(16), dp(18), dp(16), dp(16))
+            setPadding(dp(16), dp(14), dp(16), dp(16))
         }
 
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val hcol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         hcol.addView(W.label(this, "SETTINGS", 20f, W.theme.ink, heavy = 2))
-        hcol.addView(W.label(this, "your connection · your lane", 11f, W.theme.dim))
+        hcol.addView(W.label(this, "the app, your way", 11f, W.theme.dim))
         head.addView(hcol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(W.iconBtn(this, "✕", W.theme.paper).apply { setOnClickListener { toggleSettings(false) } })
+        val closeBtn = W.iconBtn(this, W.Icon.CLOSE, W.theme.paper)
+        closeBtn.setOnClickListener { toggleSettings(false) }
+        head.addView(closeBtn, LinearLayout.LayoutParams(dp(34), dp(34)))
         panel.addView(head)
 
         // ---- credits card ----
@@ -891,6 +984,7 @@ class MainActivity : Activity() {
         }
 
         rows.addView(item("🛍", "SHOP", "packs · pro · themes") { toggleSettings(false); openDetail("shop") })
+        rows.addView(item("⚡", "EARN & REDEEM", "watch an ad · daily tasks · codes") { toggleSettings(false); toggleSheet(true) })
         rows.addView(item("🗳", "REQUESTS", "the feature wall") { toggleSettings(false); openDetail("requests") })
         rows.addView(item("📥", "INBOX", "from the admin", withDot = true) { toggleSettings(false); openDetail("inbox") })
         rows.addView(item("⚖", "LEGAL", "terms · privacy") { toggleSettings(false); openDetail("legal") })
@@ -900,16 +994,18 @@ class MainActivity : Activity() {
             toggleSettings(false)
             if (Api.cookieValue.isBlank()) showTokenScreen() else {
                 val gid = stateJson?.optString("gid", "") ?: ""
-                AlertDialog.Builder(this)
-                    .setTitle("Identity")
-                    .setMessage(if (gid.isNotBlank()) "You are $gid — one identity across the bots, the web and this app.\n\nDisconnect everywhere?" else "Linked — the identity is still loading. Try again in a second.")
-                    .setPositiveButton("Log out") { _, _ -> confirmLogout() }
-                    .setNegativeButton("Keep", null).show()
+                orubusDialog(
+                    "Identity",
+                    if (gid.isNotBlank()) "you are $gid — one identity across the bots, the web and this app.\n\ndisconnect everywhere?"
+                    else "linked — the identity is still loading. try again in a second.",
+                    "LOG OUT", "KEEP", danger = gid.isNotBlank(),
+                    onPositive = { confirmLogout() }
+                )
             }
         })
 
-        screen.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h).apply { gravity = Gravity.TOP })
-        panel.translationY = -h.toFloat()
+        screen.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h).apply { gravity = Gravity.BOTTOM })
+        panel.translationY = h.toFloat()
         settingsPanel = panel
     }
 
@@ -946,7 +1042,7 @@ class MainActivity : Activity() {
     internal fun toggleSettings(open: Boolean) {
         val p = settingsPanel ?: return
         val h = p.layoutParams.height.toFloat()
-        p.animate().translationY(if (open) 0f else -h).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
+        p.animate().translationY(if (open) 0f else h).setDuration(230).setInterpolator(DecelerateInterpolator()).start()
         settingsScrim?.visibility = if (open) View.VISIBLE else View.GONE
         creditsRedraw?.invoke()
     }
@@ -1091,14 +1187,14 @@ class MainActivity : Activity() {
                         .firstOrNull { it.optString("name", "").endsWith(".apk") }
                     val url = asset?.optString("browser_download_url") ?: Api.APK_URL
                     runOnUiThread {
-                        AlertDialog.Builder(this)
-                            .setTitle("Update available — v$tag")
-                            .setMessage("You're on v$cur. A newer build is out — grab it, install over the top, everything stays.")
-                            .setPositiveButton("Download") { _, _ ->
+                        orubusDialog(
+                            "Update available — v$tag",
+                            "you're on v$cur — a newer build is out. grab it and install over the top; everything stays.",
+                            "GET IT", "LATER",
+                            onPositive = {
                                 try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) {}
                             }
-                            .setNegativeButton("Later", null)
-                            .show()
+                        )
                     }
                 } else if (explicit) {
                     runOnUiThread { Toast.makeText(this, "you're on the latest — v$cur", Toast.LENGTH_SHORT).show() }
@@ -1160,7 +1256,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when {
             detailFrame?.visibility == View.VISIBLE -> closeDetail()
-            sheetPanel?.translationY == 0f -> toggleSheet(false)
+            sheetPanel?.visibility == View.VISIBLE && sheetPanel?.translationY == 0f -> toggleSheet(false)
             settingsPanel?.translationY == 0f -> toggleSettings(false)
             drawerPanel?.translationX == 0f -> toggleDrawer(false)
             else -> moveTaskToBack(true)

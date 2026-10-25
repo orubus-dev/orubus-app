@@ -50,8 +50,12 @@ object Solver {
                 // Android WebView UA reads as a 400 down the lane.
                 wv.settings.userAgentString = DuckEngine.UA
                 wv.setBackgroundColor(0x00000000)
-                wv.alpha = 0f
-                wv.visibility = android.view.View.GONE
+                // Full-size and INVISIBLE (not a 1px GONE spec): the sandbox sees
+                // a real viewport, so every layout-ish probe inside reports
+                // believable values — the challenge answers stay byte-faithful.
+                wv.isFocusable = false
+                wv.isEnabled = false
+                wv.visibility = android.view.View.INVISIBLE
                 wv.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String) {
                         ready = true
@@ -59,12 +63,14 @@ object Solver {
                 }
                 wv.addJavascriptInterface(Bridge(), "Android")
                 activity.findViewById<android.view.ViewGroup>(android.R.id.content)
-                    .addView(wv, android.view.ViewGroup.LayoutParams(1, 1))
+                    .addView(wv, android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT))
                 // base URL duck.ai — the shim fully shadows location anyway
                 wv.loadDataWithBaseURL("https://duck.ai/", html, "text/html", "utf-8", null)
                 web = wv
             } catch (_: Exception) {
-                // solver unavailable — DuckEngine falls back to the server lane
+                // solver unavailable — the engine's server assist takes the math
             }
         }
     }
@@ -91,12 +97,15 @@ object Solver {
 
     /**
      * Blocking solve — call from a background thread.
-     * Returns {ok:true, header, signals} or {ok:false, error}.
+     * Returns {ok:true, header, signals} or {ok:false, error}; null when the
+     * sandbox never came up (the engine then asks the server to solve).
      */
     fun solve(challenge: String, ua: String, entryVer: String, timeoutMs: Long = 10_000): JSONObject? {
-        // the WebView spins up async on the main thread — wait briefly for it
-        val deadline = System.currentTimeMillis() + 3_000
-        while (web == null && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        // the WebView spins up async on the main thread — give it real time
+        // (cold devices budget seconds, not milliseconds) and wait for the
+        // PAGE to actually finish, not just the view to exist
+        val deadline = System.currentTimeMillis() + 8_000
+        while (!ready && System.currentTimeMillis() < deadline) Thread.sleep(50)
         val w = web ?: return null
         val id = java.util.UUID.randomUUID().toString()
         val fut = CompletableFuture<String>()

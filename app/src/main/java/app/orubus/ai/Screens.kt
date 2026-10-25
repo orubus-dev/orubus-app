@@ -43,9 +43,9 @@ internal fun MainActivity.buildDetail() {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(12), dp(9), dp(12), dp(9))
     }
-    val back = W.iconBtn(this, "←")
+    val back = W.iconBtn(this, W.Icon.BACK)
     back.setOnClickListener { closeDetail() }
-    head.addView(back)
+    head.addView(back, LinearLayout.LayoutParams(dp(36), dp(36)))
     val title = W.label(this, "", 16f, W.theme.ink, heavy = 2)
     title.setPadding(dp(10), 0, 0, 0)
     head.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -151,6 +151,24 @@ internal fun MainActivity.renderShop(cont: LinearLayout) {
         val ownedIds = mutableSetOf("classic")
         if (owned != null) for (i in 0 until owned.length()) ownedIds.add(owned.optString(i))
         val activeTheme = wallet?.optString("theme", "") ?: ""
+        val active = if (activeTheme.isBlank()) "classic" else activeTheme
+
+        // the default stays reachable — one tap back to the classic cream, always free
+        val defCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = W.shadowed(this@renderShop, W.theme.paper, 12, 2)
+            setPadding(dp(13), dp(11), dp(13), dp(11))
+        }
+        defCard.addView(W.label(this, "Default theme", 14.5f, W.theme.ink, heavy = 2))
+        defCard.addView(W.label(this, "the classic cream look — the one you met first. always yours.", 11.5f, W.theme.dim).apply { setPadding(0, dp(2), 0, dp(8)) })
+        val defActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        if (active == "classic") defActions.addView(W.pill(this, "ACTIVE", true))
+        else defActions.addView(W.button(this, "USE", W.theme.acc, W.theme.ink, small = true).apply {
+            setOnClickListener { applyTheme("classic") }
+        })
+        defCard.addView(defActions)
+        cont.addView(defCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+
         for (i in 0 until items.length()) {
             val it = items.getJSONObject(i)
             val kind = it.optString("kind", "")
@@ -165,28 +183,11 @@ internal fun MainActivity.renderShop(cont: LinearLayout) {
             val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
             if (kind == "theme") {
                 val themeId = it.optString("id", "").removePrefix("theme_")
-                if (themeId == activeTheme) {
+                if (themeId == active) {
                     actions.addView(W.pill(this, "ACTIVE", true))
                 } else if (ownedIds.contains(themeId)) {
-                    actions.addView(W.button(this, "USE", W.theme.acc, W.theme.ink, small = true).apply {                        setOnClickListener {
-                            Thread {
-                                try {
-                                    val r = Api.post("setprefs", mapOf("theme" to themeId))
-                                    runOnUiThread {
-                                        if (r.optBoolean("ok", false)) {
-                                            r.optJSONObject("wallet")?.let { renderWallet(it) }
-                                            stateJson?.optJSONObject("wallet")?.put("theme", themeId)
-                                            Store.prefs().edit().putString("theme", themeId).apply()
-                                            W.theme = W.themeFor(themeId)
-                                            Toast.makeText(this@renderShop, "theme on — re-wrapping the app", Toast.LENGTH_SHORT).show()
-                                            recreate()
-                                        } else Toast.makeText(this@renderShop, r.optString("error", "couldn't apply"), Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (_: Exception) {
-                                    runOnUiThread { Toast.makeText(this@renderShop, "network hiccup — try again", Toast.LENGTH_SHORT).show() }
-                                }
-                            }.start()
-                        }
+                    actions.addView(W.button(this, "USE", W.theme.acc, W.theme.ink, small = true).apply {
+                        setOnClickListener { applyTheme(themeId) }
                     })
                 } else {
                     actions.addView(W.pill(this, "⭐ ${it.optInt("stars", 0)}", false))
@@ -216,6 +217,28 @@ internal fun MainActivity.openBot() {
     try {
         startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link)))
     } catch (_: Exception) {}
+}
+
+/** Wear a theme: server prefs first, then the whole app re-skins itself.
+ *  "classic" is always free — the default is never lost. */
+internal fun MainActivity.applyTheme(id: String) {
+    Thread {
+        try {
+            val r = Api.post("setprefs", mapOf("theme" to id))
+            runOnUiThread {
+                if (r.optBoolean("ok", false)) {
+                    r.optJSONObject("wallet")?.let { renderWallet(it) }
+                    stateJson?.optJSONObject("wallet")?.put("theme", if (id == "classic") "" else id)
+                    Store.prefs().edit().putString("theme", id).apply()
+                    W.theme = W.themeFor(id)
+                    Toast.makeText(this, "theme on — re-wrapping the app", Toast.LENGTH_SHORT).show()
+                    recreate()
+                } else Toast.makeText(this, r.optString("error", "couldn't apply"), Toast.LENGTH_SHORT).show()
+            }
+        } catch (_: Exception) {
+            runOnUiThread { Toast.makeText(this, "network hiccup — try again", Toast.LENGTH_SHORT).show() }
+        }
+    }.start()
 }
 
 // ---------- requests wall ----------
@@ -411,7 +434,7 @@ internal fun MainActivity.renderLegal(cont: LinearLayout) {
 
 internal fun MainActivity.renderAbout(cont: LinearLayout) {
     renderPageText(cont, "/about/")
-    cont.addView(W.label(this, "app v${versionName()} · the android client — your lane, your IP, one soul everywhere", 11.5f, W.theme.dim).apply {
+    cont.addView(W.label(this, "app v${versionName()} · the android client — one soul, everywhere you are", 11.5f, W.theme.dim).apply {
         setPadding(0, dp(12), 0, 0); gravity = Gravity.CENTER
     })
 }
@@ -562,6 +585,7 @@ internal fun MainActivity.buildSheet() {
     }
     pair(chatsCard, setCard)
 
+    panel.visibility = View.GONE // closed means GONE — no bar may ever peek at the bottom
     panel.translationY = (resources.displayMetrics.heightPixels * 0.9f)
 }
 
@@ -599,9 +623,18 @@ internal fun MainActivity.toggleSheet(open: Boolean) {
     if (open) {
         val taskBody = p.findViewWithTag("tasks") as? LinearLayout
         if (taskBody != null) renderTasks(taskBody)
+        // rise from fully BELOW the screen — never peek while closed
+        p.visibility = View.VISIBLE
+        p.translationY = (resources.displayMetrics.heightPixels * 0.9f)
+        p.animate().translationY(0f).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
+        sheetScrim?.visibility = View.VISIBLE
+    } else {
+        p.animate().translationY((resources.displayMetrics.heightPixels * 0.9f))
+            .setDuration(220).setInterpolator(DecelerateInterpolator())
+            .withEndAction { p.visibility = View.GONE }
+            .start()
+        sheetScrim?.visibility = View.GONE
     }
-    p.animate().translationY(if (open) 0f else (resources.displayMetrics.heightPixels * 0.9f)).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
-    sheetScrim?.visibility = if (open) View.VISIBLE else View.GONE
 }
 
 // ---------- AdMob ----------

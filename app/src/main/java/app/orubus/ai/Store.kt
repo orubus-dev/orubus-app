@@ -90,6 +90,20 @@ object Store {
         return c
     }
 
+    /**
+     * "New chat" — open a fresh thread WITHOUT stacking empty ones: if the
+     * current thread is already idle it stays; if any idle thread exists the
+     * user lands on it; only when every thread holds content is one new
+     * chat minted. One "New chat" at a time, exactly as it should feel.
+     */
+    fun openFreshChat(): Chat {
+        val cur = currentChat()
+        if (cur.msgs.none { !it.system }) { setCurrent(cur.id); return cur }
+        val idle = chats().firstOrNull { it.msgs.none { m -> !m.system } }
+        if (idle != null) { setCurrent(idle.id); save(); return idle }
+        return newChat()
+    }
+
     fun deleteChat(id: String) {
         val list = chats()
         if (list.size <= 1) return // always keep one

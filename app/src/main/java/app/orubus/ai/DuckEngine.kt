@@ -1,26 +1,42 @@
 package app.orubus.ai
 
+import okhttp3.ConnectionPool
+import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.IOException
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.UnknownHostException
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
- * THE REQUEST ENGINE — duck.ai called from the DEVICE.
+ * THE REQUEST ENGINE — the lane the phone owns.
  *
- * Every request leaves the phone with the user's own IP: the residential
- * lane DDG accepts. No Vercel hop, no datacenter ASN, no "brain lane is
- * packed" — that message was the shared server IP tripping DDG's walls;
- * from a phone, the wall isn't there.
+ * Every request leaves the device with the user's own IP, and one IP it
+ * stays: the engine pins a single resolved address for the whole session
+ * and rides one pooled connection (HTTP/2), so the journey, the challenge
+ * and the chat all present the SAME steady address. Tokens flap when the
+ * network flaps — so the network doesn't flap.
  *
- * Flow (identical to the proven server path in lib/duck.ts):
- *   1. GET  /duckchat/v1/status   → x-vqd-hash-1 challenge (fresh per turn)
- *   2. Solver (WebView) runs the challenge JS → wrapped header + fe-signals
+ * Token life: a solved challenge header is kept (memory + disk) and reused
+ * turn after turn until the lane rejects it — only then is the next one
+ * minted. Continuous chatting never re-mints per message.
+ *
+ * The challenge math runs on-device first (Solver, the WebView sandbox);
+ * if the sandbox can't (cold start, odd variant), the server's proven
+ * solver runs the math — the duck.ai HTTP calls STILL leave from the
+ * device either way.
+ *
+ *   1. GET  /duckchat/v1/status   → x-vqd-hash-1 challenge
+ *   2. solve (device sandbox → server assist)
  *   3. POST /duckchat/v1/chat     → SSE stream → text
- * 418/challenge noise is retried with a fresh challenge (duckChat parity).
+ * Failures retry with a fresh mint; a dead network resolution re-resolves.
  */
 object DuckEngine {
 
@@ -42,99 +58,151 @@ object DuckEngine {
 
     fun modelFor(tier: String): String = models[tier] ?: models["standard"]!!
 
-    private fun baseHeaders(): Map<String, String> = mapOf(
-        "user-agent" to UA,
-        "accept" to "*/*",
-        "referer" to "https://duck.ai/",
-        "origin" to "https://duck.ai",
-        "sec-ch-ua" to "\"Chromium\";v=\"131\", \"Not A(Brand\";v=\"24\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Windows\"",
-        "accept-language" to "en-US",
-    )
+    // ---------- the steady IP ----------
+    // One resolved address per session for every engine call. Mobile stacks
+    // flap between IPv4 and IPv6 across connections; a token minted on one
+    // family dies on the other. Pinning one address keeps the journey steady.
 
-    /** Derive the live front-end versions from the duck.ai homepage. Never
-     *  latches a failure — a stale fe-version reads as a 400 down the lane,
-     *  so a failed derivation retries on the next turn. */
+    private val pinnedDns = object : Dns {
+        @Volatile private var fixed: InetAddress? = null
+        @Volatile private var at: Long = 0
+
+        override fun lookup(hostname: String): List<InetAddress> {
+            if (hostname != "duckduckgo.com" && hostname != "duck.ai") return Dns.SYSTEM.lookup(hostname)
+            val f = fixed
+            if (f != null && System.currentTimeMillis() - at < 15 * 60_000L) return listOf(f)
+            val list = try { Dns.SYSTEM.lookup(hostname) } catch (e: Exception) { throw e }
+            val pick = list.firstOrNull { it is Inet4Address } ?: list.firstOrNull()
+            if (pick == null) throw UnknownHostException(hostname)
+            fixed = pick
+            at = System.currentTimeMillis()
+            return listOf(pick)
+        }
+
+        fun reset() { fixed = null; at = 0 }
+    }
+
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .dns(pinnedDns)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(75, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(4, 5, TimeUnit.MINUTES))
+        .build()
+
+    private fun Request.Builder.base(): Request.Builder {
+        header("user-agent", UA)
+        header("accept", "*/*")
+        header("referer", "https://duck.ai/")
+        header("origin", "https://duck.ai")
+        header("sec-ch-ua", "\"Chromium\";v=\"131\", \"Not A(Brand\";v=\"24\"")
+        header("sec-ch-ua-mobile", "?0")
+        header("sec-ch-ua-platform", "\"Windows\"")
+        header("accept-language", "en-US")
+        return this
+    }
+
+    /** Derive the live front-end versions from the homepage. Never latches a
+     *  failure — a stale fe-version reads as a 400 down the lane, so a failed
+     *  derivation retries on the next turn. */
     fun refreshFe(force: Boolean = false) {
         if (feFetched && !force) return
         try {
-            val c = connect("https://duck.ai/", "GET")
-            c.connectTimeout = 10_000
-            c.readTimeout = 10_000
-            val body = readAll(c)
-            if (body.isNullOrBlank()) return // fallbacks stand; try again next turn
-            var ok = false
-            val tag = Regex("data-version-tag=\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-            val sha = Regex("data-version-sha=\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-            if (!tag.isNullOrBlank() && !sha.isNullOrBlank()) { feVersion = "$tag-$sha"; ok = true }
-            else if (!tag.isNullOrBlank()) { feVersion = tag; ok = true }
-            val e = Regex("entry\\.duckai\\.([a-z0-9]+)\\.js").find(body)?.groupValues?.get(1)
-            if (!e.isNullOrBlank()) { entryVer = e; ok = true }
-            if (ok) feFetched = true
+            val req = Request.Builder().url("https://duck.ai/").base().get().build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return
+                val body = resp.body?.string() ?: return
+                var ok = false
+                val tag = Regex("data-version-tag=\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                val sha = Regex("data-version-sha=\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                if (!tag.isNullOrBlank() && !sha.isNullOrBlank()) { feVersion = "$tag-$sha"; ok = true }
+                else if (!tag.isNullOrBlank()) { feVersion = tag; ok = true }
+                val e = Regex("entry\\.duckai\\.([a-z0-9]+)\\.js").find(body)?.groupValues?.get(1)
+                if (!e.isNullOrBlank()) { entryVer = e; ok = true }
+                if (ok) feFetched = true
+            }
         } catch (_: Exception) {
             // fallbacks stand; try again next turn
-        }
-    }
-
-    private fun connect(url: String, method: String): HttpURLConnection {
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.requestMethod = method
-        c.instanceFollowRedirects = true
-        for ((k, v) in baseHeaders()) c.setRequestProperty(k, v)
-        return c
-    }
-
-    private fun readAll(c: HttpURLConnection): String? {
-        val code = c.responseCode
-        val stream = if (code in 200..299) c.inputStream else c.errorStream ?: return null
-        return try {
-            BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
-        } catch (_: Exception) {
-            null
-        } finally {
-            c.disconnect()
         }
     }
 
     class DuckException(val status: Int, message: String) : Exception(message)
     class BusyException(message: String) : Exception(message)
 
-    /** GET status → the x-vqd-hash-1 challenge for this journey. */
-    private fun status(journey: String): String {
-        val c = connect("https://duckduckgo.com/duckchat/v1/status", "GET")
-        c.setRequestProperty("x-vqd-accept", "1")
-        c.setRequestProperty("cache-control", "no-store")
-        c.setRequestProperty("x-ddg-journey-id", journey)
-        c.connectTimeout = 12_000
-        c.readTimeout = 12_000
-        val code = c.responseCode
-        val challenge = c.headerFields?.entries
-            ?.firstOrNull { it.key.equals("x-vqd-hash-1", ignoreCase = true) }?.value?.firstOrNull()
-        if (code != 200 || challenge.isNullOrBlank()) {
-            c.disconnect()
-            throw DuckException(code, "no-challenge:$code")
-        }
-        c.disconnect()
-        return challenge
+    // ---------- the token: alive till it runs out ----------
+
+    class Token(val header: String, val signals: String, val journey: String, val mintedAt: Long) {
+        fun age(): Long = System.currentTimeMillis() - mintedAt
     }
 
-    /** POST chat → full SSE text. */
-    private fun chatOnce(journey: String, solved: JSONObject, model: String, messages: JSONArray, timeoutMs: Int): String {
-        val c = connect("https://duckduckgo.com/duckchat/v1/chat", "POST")
-        c.setRequestProperty("accept", "text/event-stream")
-        c.setRequestProperty("content-type", "application/json")
-        c.setRequestProperty("x-vqd-hash-1", solved.optString("header"))
-        c.setRequestProperty("x-fe-signals", solved.optString("signals"))
-        c.setRequestProperty("x-fe-version", feVersion)
-        c.setRequestProperty("x-duckai-response-id", UUID.randomUUID().toString())
-        c.setRequestProperty("x-duckai-consent-purposes", "user-location,image-generation,web-search")
-        c.setRequestProperty("x-duckai-tool-approval", "web-search")
-        c.setRequestProperty("x-ddg-journey-id", journey)
-        c.connectTimeout = 15_000
-        c.readTimeout = timeoutMs
-        c.doOutput = true
+    private const val TOKEN_TTL_MS = 5 * 60_000L // preemptive re-mint window; death retries cover the rest
 
+    @Volatile private var token: Token? = null
+
+    private fun currentToken(): Token? {
+        token?.let { return it }
+        return try {
+            val raw = Store.prefs().getString("duckToken", "") ?: ""
+            if (raw.isBlank()) null
+            else {
+                val o = JSONObject(raw)
+                if (o.optString("h").isBlank()) null
+                else Token(o.optString("h"), o.optString("s"), o.optString("j"), o.optLong("t")).also { token = it }
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun saveToken(t: Token) {
+        token = t
+        try {
+            Store.prefs().edit().putString(
+                "duckToken",
+                JSONObject().put("h", t.header).put("s", t.signals).put("j", t.journey).put("t", t.mintedAt).toString()
+            ).apply()
+        } catch (_: Exception) { /* persistence never blocks the lane */ }
+    }
+
+    private fun clearToken() {
+        token = null
+        try { Store.prefs().edit().remove("duckToken").apply() } catch (_: Exception) {}
+    }
+
+    /** GET status → the x-vqd-hash-1 challenge for this journey. */
+    private fun status(journey: String): String {
+        val req = Request.Builder()
+            .url("https://duckduckgo.com/duckchat/v1/status")
+            .base()
+            .header("x-vqd-accept", "1")
+            .header("cache-control", "no-store")
+            .header("x-ddg-journey-id", journey)
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val challenge = resp.header("x-vqd-hash-1")
+            if (!resp.isSuccessful || challenge.isNullOrBlank()) throw DuckException(resp.code, "no-challenge:${resp.code}")
+            return challenge
+        }
+    }
+
+    /** Mint a fresh token: status → solve (device sandbox first, server
+     *  assist second). The HTTP lane stays on the device throughout. */
+    private fun mint(): Token {
+        val journey = UUID.randomUUID().toString().replace("-", "")
+        val challenge = status(journey)
+        var solved = Solver.solve(challenge, UA, entryVer)
+        if (solved == null || !solved.optBoolean("ok", false)) {
+            solved = Api.serverSolve(challenge)
+        }
+        if (solved == null || !solved.optBoolean("ok", false)) {
+            throw DuckException(0, solved?.optString("error", "solve-failed") ?: "solver-unavailable")
+        }
+        val t = Token(solved.optString("header"), solved.optString("signals"), journey, System.currentTimeMillis())
+        saveToken(t)
+        return t
+    }
+
+    /** POST chat → full SSE text, using the given token. */
+    private fun chatOnce(t: Token, model: String, messages: JSONArray, timeoutMs: Int): String {
         val body = JSONObject().apply {
             put("model", model)
             put("messages", messages)
@@ -144,70 +212,88 @@ object DuckEngine {
             put("canDelegateImageGeneration", JSONObject.NULL)
             put("canShowGreeting", false)
         }
-        c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-
-        val code = c.responseCode
-        if (code != 200) {
-            val err = try { c.errorStream?.bufferedReader()?.use { it.readText() }?.take(120) } catch (_: Exception) { "" }
-            c.disconnect()
-            throw DuckException(code, "duck-$code:$err")
-        }
-
-        val out = StringBuilder()
-        try {
-            BufferedReader(InputStreamReader(c.inputStream, Charsets.UTF_8)).useLines { lines ->
-                for (line in lines) {
-                    val l = line.trim()
-                    if (!l.startsWith("data: ")) continue
-                    val payload = l.substring(6)
-                    if (payload == "[DONE]") break
-                    if (payload.startsWith("[")) continue
-                    try {
-                        val j = JSONObject(payload)
-                        if (j.has("message") && !j.isNull("message")) out.append(j.getString("message"))
-                        if (j.optString("action", "") == "error") throw DuckException(0, "duck-sse:${j.optString("type", "err")}")
-                    } catch (e: DuckException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // partial JSON across chunk boundaries — next line completes it
-                    }
+        val req = Request.Builder()
+            .url("https://duckduckgo.com/duckchat/v1/chat")
+            .base()
+            .header("accept", "text/event-stream")
+            .header("content-type", "application/json")
+            .header("x-vqd-hash-1", t.header)
+            .header("x-fe-signals", t.signals)
+            .header("x-fe-version", feVersion)
+            .header("x-duckai-response-id", UUID.randomUUID().toString())
+            .header("x-duckai-consent-purposes", "user-location,image-generation,web-search")
+            .header("x-duckai-tool-approval", "web-search")
+            .header("x-ddg-journey-id", t.journey)
+            .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val err = try { resp.body?.string()?.take(120) ?: "" } catch (_: Exception) { "" }
+                throw DuckException(resp.code, "duck-${resp.code}:$err")
+            }
+            val src = resp.body?.source() ?: throw DuckException(0, "duck-empty")
+            val out = StringBuilder()
+            while (true) {
+                val line = try { src.readUtf8Line() } catch (_: Exception) { null } ?: break
+                val l = line.trim()
+                if (!l.startsWith("data: ")) continue
+                val payload = l.substring(6)
+                if (payload == "[DONE]") break
+                if (payload.startsWith("[")) continue
+                try {
+                    val j = JSONObject(payload)
+                    if (j.has("message") && !j.isNull("message")) out.append(j.getString("message"))
+                    if (j.optString("action", "") == "error") throw DuckException(0, "duck-sse:${j.optString("type", "err")}")
+                } catch (e: DuckException) {
+                    throw e
+                } catch (_: Exception) {
+                    // partial JSON across chunk boundaries — next line completes it
                 }
             }
-        } finally {
-            c.disconnect()
+            val text = out.toString().trim()
+            if (text.isEmpty()) throw DuckException(0, "duck-empty")
+            return text
         }
-        val text = out.toString().trim()
-        if (text.isEmpty()) throw DuckException(0, "duck-empty")
-        return text
+    }
+
+    /** Background warm-up: fe versions + a token in the pocket before the
+     *  first message, so the first send is as instant as the rest. */
+    fun warm() {
+        Thread {
+            try { refreshFe() } catch (_: Exception) {}
+            try { if (currentToken() == null) mint() } catch (_: Exception) { /* the first send mints */ }
+        }.start()
     }
 
     /**
-     * One billed turn: status → solve → chat, retrying challenge-layer noise
-     * with a fresh challenge — exactly the server's duckChat retry ladder
-     * (any duck-4xx counts as challenge noise and gets one fresh roll).
-     * Blocking; call from a worker thread.
+     * One billed turn. Token reuse: the current token rides until the lane
+     * rejects it (or the TTL window passes) — only then the next one is
+     * minted. Blocking; call from a worker thread.
      */
     fun chat(messages: JSONArray, model: String, timeoutMs: Int = 45_000): String {
         refreshFe()
         var last: Exception? = null
         for (attempt in 0 until 3) {
-            if (attempt > 0) Thread.sleep(2000 + (Math.random() * 2000).toLong())
-            val journey = UUID.randomUUID().toString().replace("-", "")
+            if (attempt > 0) Thread.sleep(1200 + (Math.random() * 1500).toLong())
+            val held = currentToken()
+            val t: Token = if (held != null && held.age() < TOKEN_TTL_MS) held else {
+                clearToken()
+                try { mint() } catch (e: Exception) { last = e; null } ?: continue
+            }
             try {
-                val challenge = status(journey)
-                val solved = Solver.solve(challenge, UA, entryVer)
-                    ?: throw DuckException(0, "solver-unavailable")
-                if (!solved.optBoolean("ok", false)) throw DuckException(0, solved.optString("error", "solve-failed"))
-                return chatOnce(journey, solved, model, messages, timeoutMs)
+                val answer = chatOnce(t, model, messages, timeoutMs)
+                saveToken(t) // the token stays alive for the next turn
+                return answer
             } catch (e: DuckException) {
                 last = e
+                clearToken() // this token ran out — the next one gets minted
                 if (e.status in 400..599) feFetched = false // re-derive before the retry
-                val retryable = e.status == 418 || e.status in 400..499 || e.message?.startsWith("no-challenge") == true ||
-                    e.message?.startsWith("solve") == true || e.message?.startsWith("bad-sig") == true ||
-                    e.message == "duck-empty" || e.status == 0
+                val retryable = e.status == 418 || e.status in 400..499 || e.status == 0 ||
+                    e.message?.startsWith("no-challenge") == true || e.message == "duck-empty"
                 if (!retryable) throw e
-            } catch (e: Exception) {
+            } catch (e: IOException) {
                 last = e
+                pinnedDns.reset() // the network moved — re-pin on the next attempt
             }
         }
         throw BusyException(last?.message ?: "the free lane is catching its breath")

@@ -55,7 +55,9 @@ android {
 }
 
 dependencies {
-    // AdMob — the ONE external dependency (v2 monetization: rewarded ads earn
-    // SU, a banner rides the shop). Everything else stays framework-only.
+    // AdMob — rewarded SU + the shop banner (v2 monetization).
+    // OkHttp — the request engine's HTTP lane: one pooled client, one steady
+    // pinned IP for every duck.ai call (Dns pinning), HTTP/2 keep-alive.
     implementation 'com.google.android.gms:play-services-ads:23.6.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }

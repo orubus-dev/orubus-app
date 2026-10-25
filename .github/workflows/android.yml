@@ -85,7 +85,7 @@ jobs:
           TAG: v${{ steps.ver.outputs.name }}
         run: |
           APK=app/build/outputs/apk/release/Orubus.apk
-          NOTES=$(printf 'Orubus AI for Android — v%s\n\n- duck.ai-powered chat (free)\n- the requests wall\n- your Soul Units wallet\n- legal-first onboarding, GENJ token link\n\nInstall: open the APK, allow "install unknown apps" if asked, install over any previous version.' "${{ steps.ver.outputs.name }}")
+          NOTES=$(printf 'Orubus AI for Android — v%s\n\n- live chat, tuned for more usage and faster replies\n- the requests wall\n- your Soul Units wallet\n- legal-first onboarding, GENJ token link\n\nInstall: open the APK, allow "install unknown apps" if asked, install over any previous version.' "${{ steps.ver.outputs.name }}")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Orubus AI $TAG" --notes "$NOTES"
           gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber

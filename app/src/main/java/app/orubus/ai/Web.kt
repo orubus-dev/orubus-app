@@ -1,6 +1,9 @@
 package app.orubus.ai
 
 import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -149,15 +152,79 @@ object W {
             press(this)
         }
 
-    /** 34dp square icon button — `.iconbtn` (yolk fill by default). */
-    fun iconBtn(c: Context, glyph: String, bg: Int = -1): TextView = TextView(c).apply {
-        text = glyph
-        textSize = 15f
-        typeface = bold(c)
-        gravity = Gravity.CENTER
-        setTextColor(if (bg == -1 || bg == theme.acc) theme.ink else theme.ink)
+    /** 36dp square icon button — `.iconbtn` (yolk fill by default). The glyph
+     *  is DRAWN (IconView), never a font glyph: fonts squeeze or drop ☰ ⚙ ✕ ←,
+     *  and a drawn icon is pixel-comfortable on every device. */
+    fun iconBtn(c: Context, icon: Icon, bg: Int = -1): FrameLayout = FrameLayout(c).apply {
         background = shadowed(c, if (bg == -1) theme.acc else bg, 10, 2)
         press(this)
+        isClickable = true
+        addView(IconView(c, icon, theme.ink), FrameLayout.LayoutParams(dp(c, 19), dp(c, 19), Gravity.CENTER))
+    }
+
+    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND }
+
+    /** Hand-drawn icon — 2.1dp rounded ink strokes, centered, never squeezed. */
+    class IconView(c: Context, private val icon: Icon, inkColor: Int) : View(c) {
+
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = inkColor
+            style = Paint.Style.STROKE
+            strokeWidth = resources.displayMetrics.density * 2.1f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = inkColor
+            style = Paint.Style.FILL
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val s = Math.min(w, h)
+            val cx = w / 2f
+            val cy = h / 2f
+            when (icon) {
+                Icon.MENU -> {
+                    val half = s * 0.30f
+                    val gap = s * 0.21f
+                    for (i in -1..1) canvas.drawLine(cx - half, cy + i * gap, cx + half, cy + i * gap, stroke)
+                }
+                Icon.GEAR -> {
+                    val r = s * 0.27f
+                    canvas.drawCircle(cx, cy, r, stroke)
+                    canvas.drawCircle(cx, cy, s * 0.115f, stroke)
+                    for (i in 0 until 8) {
+                        val a = Math.PI * i / 4.0
+                        val cos = Math.cos(a).toFloat()
+                        val sin = Math.sin(a).toFloat()
+                        canvas.drawLine(cx + r * cos, cy + r * sin, cx + r * 1.42f * cos, cy + r * 1.42f * sin, stroke)
+                    }
+                }
+                Icon.CLOSE -> {
+                    val half = s * 0.27f
+                    canvas.drawLine(cx - half, cy - half, cx + half, cy + half, stroke)
+                    canvas.drawLine(cx - half, cy + half, cx + half, cy - half, stroke)
+                }
+                Icon.BACK -> {
+                    val half = s * 0.28f
+                    canvas.drawLine(cx + half, cy, cx - half, cy, stroke)
+                    canvas.drawLine(cx - half, cy, cx - half + half * 0.66f, cy - half * 0.66f, stroke)
+                    canvas.drawLine(cx - half, cy, cx - half + half * 0.66f, cy + half * 0.66f, stroke)
+                }
+                Icon.SEND -> {
+                    val path = Path()
+                    path.moveTo(cx - s * 0.30f, cy - s * 0.27f)
+                    path.lineTo(cx + s * 0.36f, cy)
+                    path.lineTo(cx - s * 0.30f, cy + s * 0.27f)
+                    path.lineTo(cx - s * 0.13f, cy)
+                    path.close()
+                    canvas.drawPath(path, fill)
+                }
+            }
+        }
     }
 
     /** The progress bar — `.bar` with the `.bar i` fill. Returns (track, fill). */
