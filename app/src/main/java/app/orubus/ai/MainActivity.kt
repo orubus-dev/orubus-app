@@ -564,7 +564,7 @@ class MainActivity : Activity() {
         if (think.isNotBlank()) {
             // the thinking stays one tap away — a quiet chip under the answer
             val chip = TextView(this).apply {
-                text = "💭 my thinking"; textSize = 11.5f
+                this.text = "💭 my thinking"; textSize = 11.5f
                 setTextColor(W.theme.dim); typeface = W.medium(this@MainActivity)
                 setPadding(dp(2), dp(3), dp(2), dp(3))
                 W.press(this)
@@ -722,7 +722,7 @@ class MainActivity : Activity() {
             false // never consume — long-click still fires
         }
         v.setOnLongClickListener {
-            try { performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } catch (_: Exception) {}
+            try { v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } catch (_: Exception) {}
             val items = mutableListOf<Triple<String, Boolean, () -> Unit>>() // label, danger, action
             items.add(Triple("Copy", false) {
                 val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -760,9 +760,9 @@ class MainActivity : Activity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         for ((label, danger, action) in items) {
             val row = TextView(this).apply {
-                text = label; textSize = 13.5f; typeface = W.medium(this@showFingerMenu)
+                this.text = label; textSize = 13.5f; typeface = W.medium(this@MainActivity)
                 setTextColor(if (danger) W.theme.acc2 else W.theme.ink)
-                background = W.stroke(this@showFingerMenu, W.theme.paper, 8)
+                background = W.stroke(this@MainActivity, W.theme.paper, 8)
                 setPadding(dp(16), dp(11), dp(16), dp(11))
                 W.press(this)
             }
@@ -775,7 +775,7 @@ class MainActivity : Activity() {
             })
         }
         val card = FrameLayout(this).apply {
-            background = W.shadowed(this@showFingerMenu, W.theme.paper, 12, 3)
+            background = W.shadowed(this@MainActivity, W.theme.paper, 12, 3)
             setPadding(dp(6), dp(6), dp(6), dp(6))
         }
         card.addView(col)
@@ -964,8 +964,8 @@ class MainActivity : Activity() {
                     }
                 }
                 val doneToken = token
-                if (linked && doneToken.isNotBlank()) Thread { Api.appDone(doneToken, answer) }.start()
-                val finalAnswer = answer
+                val finalAnswer: String = answer ?: ""
+                if (linked && doneToken.isNotBlank()) Thread { Api.appDone(doneToken, finalAnswer) }.start()
                 runOnUiThread {
                     removeView(dots)
                     if (!silent) {
