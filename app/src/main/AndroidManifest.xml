@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- AdMob: the advertising ID (Android 13 permission model) -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
     <application
         android:label="Orubus AI"
@@ -11,6 +13,14 @@
         android:theme="@style/Theme.Orubus"
         android:allowBackup="true"
         android:supportsRtl="true">
+
+        <!-- AdMob application id. Ships with Google's public TEST id so the
+             integration works out of the box; when the real AdMob account is
+             wired, swap this id AND set the unit ids in Mission Control
+             (values → AdMob rows), no other code changes. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713" />
 
         <activity
             android:name=".MainActivity"
@@ -22,5 +32,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Required by the Google Mobile Ads SDK (rendering of ad activities) -->
+        <activity
+            android:name="com.google.android.gms.ads.AdActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|uiMode|screenSize|smallestScreenSize"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

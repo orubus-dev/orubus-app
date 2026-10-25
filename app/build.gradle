@@ -55,6 +55,7 @@ android {
 }
 
 dependencies {
-    // intentionally empty — zero external dependencies: framework APIs only
-    // (smaller APK, nothing to resolve, nothing to break).
+    // AdMob — the ONE external dependency (v2 monetization: rewarded ads earn
+    // SU, a banner rides the shop). Everything else stays framework-only.
+    implementation 'com.google.android.gms:play-services-ads:23.6.0'
 }

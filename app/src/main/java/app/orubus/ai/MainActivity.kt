@@ -9,14 +9,15 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.text.method.LinkMovementMethod
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -25,160 +26,149 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Locale
 
 /**
- * Orubus AI for Android — package app.orubus.ai.
+ * Orubus AI for Android — v2 "Liquid Glass".
  *
- * First run: legal agreement popup → paste your /genjutsu token → in.
- * Then four surfaces: the Soul Units app, the requests wall, the chat
- * (its own interface, duck.ai as the main brain — free) and the legal page.
- * Updates are checked against GitHub Releases — new version, one tap.
+ * Chat-first, no split bottom bar. You land straight into the conversation;
+ * the hamburger opens your chats (name + credits live at the drawer's foot),
+ * the gear opens settings: shop, requests, inbox (announcements from the
+ * admin), legal, about, version.
  *
- * Zero external dependencies: framework views, org.json, HttpURLConnection.
+ * The request engine runs ON THE DEVICE: duck.ai is called with the user's
+ * own IP — the lane DDG never packs. Vercel only does the wallet: every
+ * message spends Soul Units exactly like every other Orubus surface.
+ * Commands work as intents — type "open shop", "remember my name is…",
+ * "how many credits" — no slash menus.
  */
 class MainActivity : Activity() {
 
-    private lateinit var prefs: android.content.SharedPreferences
-
-    // ---- UI roots ----
     private lateinit var root: FrameLayout
-    private lateinit var screens: FrameLayout
-    private lateinit var bottomBar: LinearLayout
-    private var tokenScreen: View? = null
-    private var nativeChat: View? = null
-    private val tabsButtons = mutableListOf<TextView>()
+
+    // ---- chat surface ----
+    private lateinit var chatColumn: LinearLayout
     private var chatList: LinearLayout? = null
     private var chatScroll: ScrollView? = null
     private var chatInput: EditText? = null
+    private var chatTitle: TextView? = null
     private var chatStatus: TextView? = null
-    private var chatLoaded = false
+    private var inboxDot: View? = null
+    private val modeChips = mutableListOf<TextView>()
+    private var modeRow: LinearLayout? = null
+    private var tier = "standard"
     private var sending = false
 
-    private val tabWebViews = mutableMapOf<Int, WebView>()
+    // ---- drawer / settings / overlays ----
+    private var drawerPanel: LinearLayout? = null
+    private var drawerScrim: View? = null
+    private var chatsList: LinearLayout? = null
+    private var footName: TextView? = null
+    private var footGid: TextView? = null
+    private var footMeter: View? = null
+    private var footMeterFill: View? = null
+    private var footBal: TextView? = null
+    private var footBonus: TextView? = null
+    private var adButton: TextView? = null
+    private var settingsPanel: LinearLayout? = null
+    private var settingsScrim: View? = null
+    private var inboxScreen: LinearLayout? = null
+    private var inboxList: LinearLayout? = null
+    private var webFrame: LinearLayout? = null
+    private var webView: WebView? = null
+    private var webTitle: TextView? = null
+    private var bannerSlot: FrameLayout? = null
 
-    companion object {
-        val TABS = listOf("⚡ App" to "https://orubus-ai.vercel.app/app",
-            "🗳 Requests" to "https://orubus-ai.vercel.app/requests",
-            "💬 Chat" to "",
-            "⚖ Legal" to "https://orubus-ai.vercel.app/legal")
-    }
+    // ---- state ----
+    @Volatile private var stateJson: JSONObject? = null
+    @Volatile private var prelude = ""
+    private var built = false
+    private val webTargets = mapOf(
+        "shop" to ("SHOP" to "https://orubus-ai.vercel.app/shop"),
+        "requests" to ("REQUESTS" to "https://orubus-ai.vercel.app/requests"),
+        "legal" to ("LEGAL" to "https://orubus-ai.vercel.app/legal"),
+        "about" to ("ABOUT" to "https://orubus-ai.vercel.app/about"),
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        prefs = getSharedPreferences("orubus", MODE_PRIVATE)
+        AppCtx.app = application
+        val prefs = Store.prefs()
         Api.cookieValue = prefs.getString("cookie", "") ?: ""
 
         root = FrameLayout(this)
-        root.setBackgroundColor(C(0xFF0F0F0F))
-        buildShell()
+        root.setBackgroundColor(G.INK)
+        root.addView(LiquidBackground(this), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        chatColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(chatColumn, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
 
+        Solver.ensure(this)
+
         if (!prefs.getBoolean("legal_ok", false)) showLegal() else next()
-    }
-
-    private fun C(v: Long) = v.toInt()
-
-    // ---------- first-run gates ----------
-
-    private fun showLegal() {
-        val web = WebView(this)
-        web.settings.javaScriptEnabled = false
-        web.setBackgroundColor(C(0xFF171717))
-        web.loadUrl("https://orubus-ai.vercel.app/legal")
-
-        AlertDialog.Builder(this)
-            .setTitle("Before you come in")
-            .setView(web)
-            .setCancelable(false)
-            .setPositiveButton("I agree") { _, _ ->
-                prefs.edit().putBoolean("legal_ok", true).apply()
-                next()
-            }
-            .setNegativeButton("Leave") { _, _ -> finishAffinity() }
-            .show()
     }
 
     private fun next() {
         if (Api.cookieValue.isBlank()) showTokenScreen() else enterMain()
     }
 
-    // ---------- GENJ token screen ----------
+    // ---------- first-run gates ----------
+
+    private fun showLegal() {
+        val web = WebView(this)
+        web.setBackgroundColor(Color.TRANSPARENT)
+        web.loadUrl("https://orubus-ai.vercel.app/legal")
+        AlertDialog.Builder(this)
+            .setTitle("Before you come in")
+            .setView(web)
+            .setCancelable(false)
+            .setPositiveButton("I agree") { _, _ ->
+                Store.prefs().edit().putBoolean("legal_ok", true).apply()
+                next()
+            }
+            .setNegativeButton("Leave") { _, _ -> finishAffinity() }
+            .show()
+    }
 
     @SuppressLint("SetTextI18n")
     private fun showTokenScreen() {
-        tokenScreen?.let { screens.removeView(it) }
-        val pad = dp(24)
-
+        val pad = G.dp(this, 24)
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(C(0xFF0F0F0F))
             setPadding(pad, pad, pad, pad)
         }
-
-        val logo = TextView(this).apply {
-            text = "◎"
-            textSize = 64f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(C(0xFFFFD84A))
-            gravity = Gravity.CENTER
-        }
+        val glass = TextView(this).apply { text = "◈"; textSize = 64f; typeface = G.black(this@MainActivity); setTextColor(G.YOLK); gravity = Gravity.CENTER }
         val title = TextView(this).apply {
-            text = "Link your Telegram"
-            textSize = 24f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, dp(16), 0, dp(4))
+            text = "LINK YOUR TELEGRAM"; textSize = 22f; typeface = G.black(this@MainActivity)
+            setTextColor(G.CREAM); gravity = Gravity.CENTER; setPadding(0, G.dp(this@MainActivity, 14), 0, G.dp(this@MainActivity, 6))
         }
         val sub = TextView(this).apply {
-            text = "same wallet · same memory · zero sign-up\n\n1. Open @orubus_bot in Telegram\n2. Send /genjutsu\n3. Paste the GENJ-XXXX code here"
-            textSize = 14.5f
-            setTextColor(C(0xFF9A9A9A))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(20))
-            setLineSpacing(dp(3).toFloat(), 1f)
+            text = "same wallet · same memory · your own lane\n\n1. Open @orubus_bot in Telegram\n2. Send /genjutsu\n3. Paste the GENJ-XXXX code here"
+            textSize = 14f; setTextColor(G.MUTED); gravity = Gravity.CENTER
+            setPadding(0, G.dp(this@MainActivity, 4), 0, G.dp(this@MainActivity, 18))
+            setLineSpacing(G.dp(this@MainActivity, 3).toFloat(), 1f)
         }
         val input = EditText(this).apply {
-            hint = "GENJ-XXXX"
-            maxLines = 1
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            setHintTextColor(C(0xFF6A6A6A))
+            hint = "GENJ-XXXX"; maxLines = 1; textSize = 16f
+            setTextColor(G.CREAM); setHintTextColor(Color.argb(120, 201, 184, 212))
             typeface = Typeface.MONOSPACE
-            setBackgroundColor(C(0xFF1F1F1F))
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = G.glass(this@MainActivity, 14, fillAlpha = 40)
+            setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 12))
         }
-        (input.layoutParams as? LinearLayout.LayoutParams)?.width = ViewGroup.LayoutParams.MATCH_PARENT
-        val btn = Button(this).apply {
-            text = "LINK"
-            isAllCaps = true
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(C(0xFF141414))
-            background = round(C(0xFFFFD84A), dp(12))
-            setPadding(dp(24), dp(12), dp(24), dp(12))
-        }
+        val btn = G.brutal(this, "LINK")
         val status = TextView(this).apply {
-            textSize = 13f
-            setTextColor(C(0xFFFF6B6B))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(12), 0, 0)
+            textSize = 13f; setTextColor(G.BAD); gravity = Gravity.CENTER; setPadding(0, G.dp(this@MainActivity, 12), 0, 0)
         }
         val later = TextView(this).apply {
             text = "no code yet — explore first, link later"
-            textSize = 13f
-            setTextColor(C(0xFF9A9A9A))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(18), 0, 0)
+            textSize = 13f; setTextColor(G.MUTED); gravity = Gravity.CENTER
+            setPadding(0, G.dp(this@MainActivity, 16), 0, 0)
         }
 
         fun goLink() {
-            val code = input.text.toString().trim().uppercase(Locale.US)
+            val code = input.text.toString().trim().uppercase(java.util.Locale.US)
             if (code.length < 6) {
-                status.setTextColor(C(0xFFFF6B6B)); status.text = "the code looks short — it's GENJ-XXXX"
-                return
+                status.text = "the code looks short — it's GENJ-XXXX"; return
             }
             btn.isEnabled = false; btn.text = "LINKING…"; status.text = ""
             Thread {
@@ -187,18 +177,15 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         btn.isEnabled = true; btn.text = "LINK"
                         if (ok) {
-                            prefs.edit().putString("cookie", Api.cookieValue).apply()
-                            pushCookieToWebViews()
+                            Store.prefs().edit().putString("cookie", Api.cookieValue).apply()
+                            pushCookieEverywhere()
                             Toast.makeText(this, "linked — welcome in", Toast.LENGTH_SHORT).show()
                             enterMain()
-                        } else {
-                            status.setTextColor(C(0xFFFF6B6B)); status.text = err
-                        }
+                        } else status.text = err
                     }
                 } catch (e: Exception) {
                     runOnUiThread {
                         btn.isEnabled = true; btn.text = "LINK"
-                        status.setTextColor(C(0xFFFF6B6B))
                         status.text = "network hiccup — ${e.message ?: "try again"}"
                     }
                 }
@@ -208,219 +195,264 @@ class MainActivity : Activity() {
         input.setOnEditorActionListener { _, _, _ -> goLink(); true }
         later.setOnClickListener { enterMain() }
 
-        box.addView(logo)
-        box.addView(title)
-        box.addView(sub)
+        box.addView(glass); box.addView(title); box.addView(sub)
         box.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        box.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
-        box.addView(status)
-        box.addView(later)
-
-        tokenScreen = box
-        screens.addView(box)
-        screens.visibility = View.VISIBLE
-        bottomBar.visibility = View.GONE
+        box.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 14) })
+        box.addView(status); box.addView(later)
+        chatColumn.addView(box, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     // ---------- main shell ----------
 
-    private fun buildShell() {
-        screens = FrameLayout(this).apply { setBackgroundColor(C(0xFF0F0F0F)) }
-        bottomBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(C(0xFF141414))
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-        }
-        val gap = dp(4)
-
-        TABS.forEachIndexed { i, (label, _) ->
-            val b = TextView(this).apply {
-                text = label
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setPadding(dp(8), dp(10), dp(8), dp(10))
-                background = round(if (i == 0) C(0xFFFFD84A) else C(0xFF1F1F1F), dp(10))
-                setTextColor(if (i == 0) C(0xFF141414) else C(0xFF9A9A9A))
-                setOnClickListener { switchTab(i) }
-            }
-            tabsButtons.add(b)
-            bottomBar.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = gap; marginEnd = gap })
-        }
-
-        // chat screen (native) — created once, hidden by default
-        val chat = buildChatScreen()
-        nativeChat = chat
-        screens.addView(chat, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        chat.visibility = View.GONE
-
-        root.addView(screens, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { bottomMargin = dp(58) })
-        root.addView(bottomBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
-    }
-
     private fun enterMain() {
-        tokenScreen?.let { screens.removeView(it); tokenScreen = null }
-        screens.visibility = View.VISIBLE
-        bottomBar.visibility = View.VISIBLE
-        switchTab(0)
+        if (built) { refreshAll(); return }
+        built = true
+        // remove onboarding leftovers
+        chatColumn.removeAllViews()
+        buildTopBar()
+        buildChatArea()
+        buildModeRow()
+        buildInputRow()
+        buildDrawer()
+        buildSettings()
+        buildInbox()
+        buildWebFrame()
+
+        loadCurrentChat()
+        refreshAll()
         checkForUpdate()
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun webViewFor(i: Int): WebView {
-        tabWebViews[i]?.let { return it }
-        val wv = WebView(this)
-        wv.settings.javaScriptEnabled = true
-        wv.settings.domStorageEnabled = true
-        wv.setBackgroundColor(C(0xFF0F0F0F))
-        wv.webViewClient = object : WebViewClient() {
-            @Deprecated("Deprecated in Java")
-            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                // keep our pages in-app; outside links go to the browser
-                return if (url.startsWith("https://orubus-ai.vercel.app")) false
-                else {
-                    try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
-                    true
-                }
-            }
-        }
-        pushCookieTo(wv)
-        screens.addView(wv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        wv.visibility = View.GONE
-        tabWebViews[i] = wv
-        return wv
-    }
-
-    private fun switchTab(i: Int) {
-        tabsButtons.forEachIndexed { j, b ->
-            val active = j == i
-            b.background = round(if (active) C(0xFFFFD84A) else C(0xFF1F1F1F), dp(10))
-            b.setTextColor(if (active) C(0xFF141414) else C(0xFF9A9A9A))
-        }
-        // hide everything, then show exactly one surface
-        nativeChat?.visibility = View.GONE
-        tabWebViews.values.forEach { it.visibility = View.GONE }
-        if (i == 2) {
-            ensureChatLoaded()
-            nativeChat?.visibility = View.VISIBLE
-        } else {
-            webViewFor(i).visibility = View.VISIBLE
+        if (chatList?.childCount == 0) {
+            pushBubble("◈ welcome to the liquid glass — the brain runs on YOUR connection here, so no packed lanes. type anything, or try \"open shop\".", system = true)
         }
     }
 
-    // ---------- native chat (duck.ai lane) ----------
-
-    private fun buildChatScreen(): LinearLayout {
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(C(0xFF0F0F0F)) }
-
-        val head = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(10)); setBackgroundColor(C(0xFF141414))
+    private fun buildTopBar() {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 10), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 10))
         }
-        val titleCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titleCol.addView(TextView(this).apply {
-            text = "Orubus AI"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
-        })
+        fun glassBtn(label: String): TextView = TextView(this).apply {
+            text = label; textSize = 17f; gravity = Gravity.CENTER
+            typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+            background = G.glass(this@MainActivity, 12)
+            setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 6), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 6))
+        }
+        val menu = glassBtn("☰")
+        menu.setOnClickListener { toggleDrawer(true) }
+        bar.addView(menu)
+
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(G.dp(this@MainActivity, 12), 0, 0, 0) }
+        chatTitle = TextView(this).apply {
+            text = "ORUBUS"; textSize = 17f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+        }
         chatStatus = TextView(this).apply {
-            textSize = 11.5f; setTextColor(C(0xFF9A9A9A)); text = "free duck lane · same soul as your bots"
+            text = "your connection · your lane"; textSize = 10.5f; setTextColor(G.MUTED)
         }
-        titleCol.addView(chatStatus)
-        head.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val relink = TextView(this).apply {
-            text = "🔗"; textSize = 18f; setPadding(dp(10), dp(4), dp(2), dp(4))
-            setOnClickListener { showTokenScreen() }
-        }
-        head.addView(relink)
-        box.addView(head)
+        col.addView(chatTitle); col.addView(chatStatus)
+        bar.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        chatScroll = ScrollView(this).apply {
-            setBackgroundColor(C(0xFF0F0F0F))
-            isVerticalScrollBarEnabled = false
+        val inbox = FrameLayout(this)
+        val ib = glassBtn("📥")
+        ib.setOnClickListener { openInbox() }
+        inbox.addView(ib, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        inboxDot = View(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(G.PINK) }
         }
+        inbox.addView(inboxDot, FrameLayout.LayoutParams(G.dp(this@MainActivity, 9), G.dp(this@MainActivity, 9), Gravity.TOP or Gravity.END).apply { topMargin = G.dp(this, 2); marginEnd = G.dp(this, 2) })
+        inboxDot?.visibility = View.GONE
+        bar.addView(inbox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this, 8) })
+
+        val gear = glassBtn("⚙")
+        gear.setOnClickListener { toggleSettings(true) }
+        bar.addView(gear, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this, 8) })
+
+        chatColumn.addView(bar)
+        // specular strip under the bar
+        chatColumn.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)))
+    }
+
+    private fun buildChatArea() {
+        chatScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
         chatList = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 8))
         }
         chatScroll!!.addView(chatList)
-        box.addView(chatScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        chatColumn.addView(chatScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM
-            setPadding(dp(10), dp(8), dp(10), dp(10)); setBackgroundColor(C(0xFF141414))
+    private fun buildModeRow() {
+        modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 4), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 6))
+        }
+        val tiers = listOf("lite" to "QUICK", "standard" to "CHAT", "pro" to "DEEP")
+        for ((t, label) in tiers) {
+            val chip = G.chip(this, label, t == tier)
+            chip.setOnClickListener { setTier(t) }
+            chip.tag = t
+            modeChips.add(chip)
+            modeRow!!.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this, 4); marginEnd = G.dp(this, 4) })
+        }
+        chatColumn.addView(modeRow)
+    }
+
+    private fun setTier(t: String) {
+        tier = t
+        for (c in modeChips) {
+            val sel = c.tag == t
+            c.setTextColor(if (sel) G.INK else G.MUTED)
+            c.background = if (sel) {
+                GradientDrawable().apply { setColor(Color.argb(230, 255, 215, 94)); cornerRadius = G.dp(this, 12).toFloat() }
+            } else G.glass(this, 12, fillAlpha = 20)
+        }
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun buildInputRow() {
+        val wrap = FrameLayout(this).apply { setPadding(G.dp(this@MainActivity, 12), 0, G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 10)) }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = G.glass(this@MainActivity, 20)
+            setPadding(G.dp(this@MainActivity, 8), G.dp(this@MainActivity, 6), G.dp(this@MainActivity, 6), G.dp(this@MainActivity, 6))
         }
         chatInput = EditText(this).apply {
-            hint = "just talk — it's free"; maxLines = 4
-            textSize = 15f; setTextColor(Color.WHITE); setHintTextColor(C(0xFF6A6A6A))
-            setBackgroundColor(C(0xFF1F1F1F)); setPadding(dp(14), dp(10), dp(14), dp(10))
+            hint = "message orubus…"; maxLines = 4; textSize = 15f
+            setTextColor(G.CREAM); setHintTextColor(Color.argb(110, 201, 184, 212))
+            background = null
+            setPadding(G.dp(this@MainActivity, 10), G.dp(this@MainActivity, 8), G.dp(this@MainActivity, 10), G.dp(this@MainActivity, 8))
         }
-        row.addView(chatInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        val send = Button(this).apply {
-            text = "Send"; textSize = 14f; typeface = Typeface.DEFAULT_BOLD
-            setTextColor(C(0xFF141414)); background = round(C(0xFFFFD84A), dp(12))
-            setPadding(dp(18), dp(8), dp(18), dp(8))
-            setOnClickListener { sendChat() }
+        panel.addView(chatInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val send = TextView(this).apply {
+            text = "▶"; textSize = 16f; gravity = Gravity.CENTER
+            typeface = G.black(this@MainActivity); setTextColor(G.INK)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(G.PINK) }
         }
-        row.addView(send)
-        box.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        return box
-    }
+        val sendWrap = FrameLayout(this)
+        sendWrap.addView(send, FrameLayout.LayoutParams(G.dp(this@MainActivity, 44), G.dp(this@MainActivity, 44)))
+        send.setOnClickListener { sendChat() }
+        panel.addView(sendWrap)
 
-    private fun linked(): Boolean = Api.cookieValue.isNotBlank()
+        wrap.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        chatColumn.addView(wrap)
 
-    private fun ensureChatLoaded() {
-        if (chatLoaded) return
-        chatLoaded = true
-        refreshChatStatus()
-        pushBubble("🟡 Welcome. This lane runs on duck.ai — free, no Soul Units spent, and it remembers everything the rest of me knows.", false)
-        Thread {
-            try {
-                if (!linked()) {
-                    runOnUiThread { pushBubble("You're not linked yet — tap 🔗 up top and paste a GENJ code from /genjutsu. Meanwhile, chat still works.", false) }
-                    return@Thread
-                }
-                val st = Api.post("state")
-                val hist = st.optJSONArray("history") ?: JSONArray()
-                val n = hist.length()
-                val from = maxOf(0, n - 30)
-                runOnUiThread {
-                    for (k in from until n) {
-                        val m = hist.getJSONObject(k)
-                        pushBubble(m.optString("t", ""), m.optString("r", "u") == "u", quiet = true)
-                    }
-                    pushBubble("(older turns live in your soul — this archive shows the last 30)", false, quiet = true)
-                }
-            } catch (e: Exception) {
-                runOnUiThread { pushBubble("couldn't load the archive: ${e.message ?: "?"}", false) }
+        // input focus → send enabled look
+        chatInput?.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                send.alpha = if (s.isNullOrBlank()) 0.55f else 1f
             }
-        }.start()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
     }
 
-    private fun refreshChatStatus() {
-        chatStatus?.text = if (linked()) "free duck lane · linked · same soul as your bots"
-        else "free duck lane · not linked yet (tap 🔗)"
+    // ---------- bubbles ----------
+
+    private fun pushBubble(text: String, mine: Boolean = false, system: Boolean = false): TextView {
+        val list = chatList ?: return TextView(this)
+        val c = this
+        val tv = TextView(c).apply {
+            this.text = if (text.length > 4000) text.take(4000) + "…" else text
+            textSize = if (system) 12.5f else 14.5f
+            if (system) typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+            setTextColor(when {
+                system -> G.MUTED
+                mine -> G.INK
+                else -> G.CREAM
+            })
+            background = when {
+                system -> null
+                mine -> GradientDrawable().apply {
+                    colors = intArrayOf(G.PINK, G.PINK_SOFT)
+                    gradientType = GradientDrawable.LINEAR_GRADIENT
+                    orientation = GradientDrawable.Orientation.TL_BR
+                    cornerRadius = G.dp(c, 16).toFloat()
+                }
+                else -> G.glass(c, 4, fillAlpha = 34)
+            }
+            setPadding(G.dp(c, 12), G.dp(c, 9), G.dp(c, 12), G.dp(c, 9))
+            maxWidth = (resources.displayMetrics.widthPixels * 0.78f).toInt()
+        }
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        when {
+            system -> { lp.gravity = Gravity.CENTER_HORIZONTAL; lp.topMargin = G.dp(c, 4); lp.bottomMargin = G.dp(c, 4) }
+            mine -> { lp.gravity = Gravity.END; lp.topMargin = G.dp(c, 6) }
+            else -> { lp.gravity = Gravity.START; lp.topMargin = G.dp(c, 6) }
+        }
+        list.addView(tv, lp)
+        list.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
+        return tv
     }
 
+    private fun loadCurrentChat() {
+        val list = chatList ?: return
+        list.removeAllViews()
+        val chat = Store.currentChat()
+        chatTitle?.text = chat.name.uppercase(java.util.Locale.US)
+        for (m in chat.msgs.takeLast(80)) pushBubble(m.text, m.mine, m.system)
+    }
+
+    // ---------- sending: intents first, then the on-device engine ----------
+
+    @SuppressLint("SetTextI18n")
     private fun sendChat() {
         if (sending) return
         val text = chatInput?.text?.toString()?.trim().orEmpty()
         if (text.isEmpty()) return
         chatInput?.setText("")
-        pushBubble(text, true)
+        val chat = Store.currentChat()
+        pushBubble(text, mine = true)
+        Store.append(chat, true, text)
+        chatTitle?.text = chat.name.uppercase(java.util.Locale.US)
+
+        // ---- intents: commands without commands ----
+        val intent = Intents.match(text)
+        if (intent != null) {
+            runIntent(intent)
+            return
+        }
+
+        // ---- the AI turn ----
         sending = true
-        val typing = pushBubble("…", false)
+        val typing = pushBubble("…")
         Thread {
+            val linked = Api.cookieValue.isNotBlank()
+            var token = ""
             try {
-                val r = Api.post("msg", mapOf("text" to text, "engine" to "duck", "tier" to "standard"))
-                val ok = r.optBoolean("ok", false)
-                val answer = r.optString("answer", r.optString("error", "hmm — empty reply"))
+                if (linked) {
+                    val spend = Api.appTurn(text, tier)
+                    if (!spend.ok) {
+                        runOnUiThread {
+                            chatList?.removeView(typing)
+                            pushBubble(spend.error, system = true)
+                            spend.wallet?.let { renderWallet(it) }
+                        }
+                        sending = false
+                        return@Thread
+                    }
+                    token = spend.token
+                    spend.wallet?.let { runOnUiThread { renderWallet(it) } }
+                }
+                val turns = Store.turnsOf(chat)
+                val pre = prelude.ifBlank { "You are Orubus — a sharp, warm, slightly playful AI companion. Keep replies tight and human." }
+                val answer = DuckEngine.chat(DuckEngine.buildMessages(pre, turns), DuckEngine.modelFor(tier))
+                if (linked && token.isNotBlank()) {
+                    Thread { Api.appDone(token, answer) }.start()
+                }
                 runOnUiThread {
                     chatList?.removeView(typing)
-                    pushBubble(if (ok) answer else "⚠ $answer", false)
+                    pushBubble(answer)
+                    Store.append(chat, false, answer)
                 }
             } catch (e: Exception) {
+                if (linked && token.isNotBlank()) Thread { Api.appFail(token) }.start()
                 runOnUiThread {
                     chatList?.removeView(typing)
-                    pushBubble("⚠ network hiccup — ${e.message ?: "try again"}", false)
+                    pushBubble("⚠ the lane slipped — ${e.message ?: "give it a moment"}${if (linked) " (your units went back)" else ""}", system = true)
                 }
             } finally {
                 sending = false
@@ -428,37 +460,644 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun pushBubble(text: String, mine: Boolean, quiet: Boolean = false): TextView {
-        val list = chatList ?: return TextView(this)
-        val tv = TextView(this).apply {
-            this.text = if (text.length > 4000) text.take(4000) + "…" else text
-            textSize = 15f
-            setTextColor(if (mine) C(0xFF141414) else Color.WHITE)
-            movementMethod = LinkMovementMethod.getInstance()
-            background = round(if (mine) C(0xFFFFD84A) else C(0xFF232323), if (mine) dp(16) else dp(4))
-            setPadding(dp(12), dp(9), dp(12), dp(9))
-            maxWidth = (resources.displayMetrics.widthPixels * 0.78f).toInt()
+    private fun runIntent(r: Intents.Result) {
+        when (r.kind) {
+            Intents.Kind.SHOP -> openWeb("shop")
+            Intents.Kind.REQUESTS -> openWeb("requests")
+            Intents.Kind.LEGAL -> openWeb("legal")
+            Intents.Kind.ABOUT -> openWeb("about")
+            Intents.Kind.INBOX -> openInbox()
+            Intents.Kind.SETTINGS -> toggleSettings(true)
+            Intents.Kind.NEWCHAT -> {
+                val c = Store.newChat()
+                chatList?.removeAllViews()
+                chatTitle?.text = c.name.uppercase(java.util.Locale.US)
+                pushBubble("fresh chat — new thread, new headspace", system = true)
+            }
+            Intents.Kind.CHATS -> toggleDrawer(true)
+            Intents.Kind.UNITS -> {
+                val w = stateJson?.optJSONObject("wallet")
+                if (w != null) {
+                    pushBubble(renderWalletText(w), system = true)
+                } else pushBubble(if (Api.cookieValue.isBlank()) "link first — the wallet lives with your telegram identity" else "wallet loading…", system = true)
+            }
+            Intents.Kind.ID -> {
+                val gid = stateJson?.optString("gid", "") ?: ""
+                pushBubble(if (gid.isNotBlank()) "you are $gid — one identity across the bots, the web and this app" else (if (Api.cookieValue.isBlank()) "not linked yet — paste a GENJ code (gear → identity)" else "identity loading…"), system = true)
+            }
+            Intents.Kind.REMEMBER, Intents.Kind.FORGET, Intents.Kind.SUMMARY, Intents.Kind.SOUL -> {
+                val cmd = r.serverCommand ?: return
+                serverCommand(cmd)
+            }
+            Intents.Kind.DOWNLOAD -> pushBubble("you're holding it — this IS the app. share it: ${Api.APK_URL}", system = true)
+            Intents.Kind.HELP -> pushBubble(
+                "try: \"open shop\" · \"new chat\" · \"how many credits\" · \"remember my name is …\" · \"catch me up\" · \"inbox\" · or just talk — I'm all ears",
+                system = true
+            )
+            Intents.Kind.LOGOUT -> {
+                AlertDialog.Builder(this)
+                    .setTitle("Log out?")
+                    .setMessage("The app forgets your session — chats stay on the device.")
+                    .setPositiveButton("Log out") { _, _ ->
+                        Store.prefs().edit().remove("cookie").apply()
+                        Api.cookieValue = ""
+                        pushCookieEverywhere()
+                        built = false
+                        chatColumn.removeAllViews()
+                        showTokenScreen()
+                    }
+                    .setNegativeButton("Stay", null).show()
+            }
         }
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.gravity = if (mine) Gravity.END else Gravity.START
-        lp.topMargin = dp(6)
-        list.addView(tv, lp)
-        list.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
-        if (!quiet) {
-            // keep the log light
-            while (list.childCount > 80) list.removeViewAt(0)
+    }
+
+    /** Free soul commands ride the server's web-command path (no SU). */
+    private fun serverCommand(cmd: String) {
+        if (Api.cookieValue.isBlank()) {
+            pushBubble("link first — your soul lives with your telegram identity (gear → identity)", system = true)
+            return
         }
-        return tv
+        pushBubble("…", system = true)
+        Thread {
+            try {
+                val resp = Api.post("msg", mapOf("text" to cmd, "tier" to "standard"))
+                val answer = if (resp.optBoolean("free", false)) resp.optString("answer", "") else resp.optString("error", "that one didn't land")
+                runOnUiThread {
+                    // drop the typing dot (last system bubble)
+                    chatList?.let { l -> if (l.childCount > 0) l.removeViewAt(l.childCount - 1) }
+                    pushBubble(answer.ifBlank { "…nothing came back" }, system = true)
+                    Store.append(Store.currentChat(), false, answer, true)
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    chatList?.let { l -> if (l.childCount > 0) l.removeViewAt(l.childCount - 1) }
+                    pushBubble("network hiccup — ${e.message ?: "try again"}", system = true)
+                }
+            }
+        }.start()
+    }
+
+    // ---------- drawer: chats on top, name + credits at the foot ----------
+
+    private fun buildDrawer() {
+        val scrim = View(this).apply { setBackgroundColor(Color.argb(140, 10, 6, 16)); visibility = View.GONE }
+        scrim.setOnClickListener { toggleDrawer(false) }
+        root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        drawerScrim = scrim
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = G.glass(this@MainActivity, 0, fillAlpha = 46, strokeDp = 1)
+            setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 16), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 14))
+        }
+        val w = (resources.displayMetrics.widthPixels * 0.82f).toInt()
+
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(TextView(this).apply {
+            text = "CHATS"; textSize = 17f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val plus = G.brutal(this, "＋ NEW", bgColor = G.PINK, fgColor = G.INK, radiusDp = 10)
+        plus.setPadding(G.dp(this, 12), G.dp(this, 7), G.dp(this, 12), G.dp(this, 7))
+        plus.setOnClickListener {
+            toggleDrawer(false)
+            val c = Store.newChat()
+            chatList?.removeAllViews()
+            chatTitle?.text = c.name.uppercase(java.util.Locale.US)
+            pushBubble("fresh chat — new thread, new headspace", system = true)
+        }
+        head.addView(plus)
+        panel.addView(head)
+        panel.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)).apply { topMargin = G.dp(this, 8); bottomMargin = G.dp(this, 8) })
+
+        val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
+        chatsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(chatsList)
+        panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // ---- foot: name + credits ----
+        val foot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = G.glass(this@MainActivity, 16, fillAlpha = 52)
+            setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 12))
+        }
+        val nameRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        footName = TextView(this).apply {
+            text = "friend"; textSize = 15f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+        }
+        nameRow.addView(footName, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        footBonus = TextView(this).apply {
+            text = "+0"; textSize = 11.5f; typeface = G.black(this@MainActivity); setTextColor(G.INK)
+            background = GradientDrawable().apply { setColor(G.YOLK); cornerRadius = G.dp(this@MainActivity, 8).toFloat() }
+            setPadding(G.dp(this@MainActivity, 8), G.dp(this@MainActivity, 3), G.dp(this@MainActivity, 8), G.dp(this@MainActivity, 3))
+        }
+        nameRow.addView(footBonus)
+        foot.addView(nameRow)
+
+        footGid = TextView(this).apply {
+            text = "not linked"; textSize = 11f; setTextColor(G.MUTED); setPadding(0, G.dp(this@MainActivity, 2), 0, 0)
+        }
+        foot.addView(footGid)
+
+        val meterHolder = FrameLayout(this).apply {
+            background = GradientDrawable().apply { setColor(Color.argb(60, 0, 0, 0)); cornerRadius = G.dp(this@MainActivity, 6).toFloat() }
+        }
+        footMeterFill = View(this).apply {
+            background = GradientDrawable().apply {
+                colors = intArrayOf(G.PINK, G.YOLK); gradientType = GradientDrawable.LINEAR_GRADIENT
+                orientation = GradientDrawable.Orientation.LEFT_RIGHT
+                cornerRadius = G.dp(this@MainActivity, 6).toFloat()
+            }
+        }
+        meterHolder.addView(footMeterFill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        footMeter = meterHolder
+        foot.addView(meterHolder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 10)).apply { topMargin = G.dp(this, 8) })
+
+        footBal = TextView(this).apply {
+            text = "— / — SU"; textSize = 12f; setTextColor(G.MUTED); setPadding(0, G.dp(this@MainActivity, 3), 0, 0)
+        }
+        foot.addView(footBal)
+
+        adButton = G.brutal(this, "📺 WATCH AD · +SU", bgColor = G.VIOLET, fgColor = G.CREAM, radiusDp = 12)
+        adButton?.setPadding(G.dp(this, 14), G.dp(this, 9), G.dp(this, 14), G.dp(this, 9))
+        adButton?.setOnClickListener { watchAd() }
+        foot.addView(adButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 10) })
+
+        panel.addView(foot, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 10) })
+
+        root.addView(panel, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.START })
+        panel.translationX = -w.toFloat()
+        drawerPanel = panel
+    }
+
+    private fun renderDrawerChats() {
+        val list = chatsList ?: return
+        list.removeAllViews()
+        val cur = Store.currentChatId()
+        for (c in Store.chats()) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = G.glass(this@MainActivity, 12, fillAlpha = if (c.id == cur) 60 else 18)
+                setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 9), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 9))
+            }
+            row.addView(TextView(this).apply {
+                text = c.name; textSize = 14f; typeface = G.black(this@MainActivity)
+                setTextColor(if (c.id == cur) G.YOLK else G.CREAM); maxLines = 1
+            })
+            val last = c.msgs.lastOrNull()?.text ?: "empty thread"
+            row.addView(TextView(this).apply {
+                text = last; textSize = 11f; setTextColor(G.MUTED); maxLines = 1
+                setPadding(0, G.dp(this@MainActivity, 1), 0, 0)
+            })
+            row.setOnClickListener {
+                Store.setCurrent(c.id)
+                loadCurrentChat()
+                toggleDrawer(false)
+            }
+            row.setOnLongClickListener {
+                AlertDialog.Builder(this)
+                    .setTitle("Delete chat?")
+                    .setMessage("\"${c.name}\" disappears from this device.")
+                    .setPositiveButton("Delete") { _, _ -> Store.deleteChat(c.id); renderDrawerChats(); loadCurrentChat() }
+                    .setNegativeButton("Keep", null).show()
+                true
+            }
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        }
+    }
+
+    private fun toggleDrawer(open: Boolean) {
+        val p = drawerPanel ?: return
+        if (open) renderDrawerChats()
+        val w = p.layoutParams.width.toFloat()
+        p.animate().translationX(if (open) 0f else -w).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
+        drawerScrim?.visibility = if (open) View.VISIBLE else View.GONE
+        drawerScrim?.animate()?.alpha(if (open) 1f else 0f)?.setDuration(240)?.start()
+    }
+
+    // ---------- settings (top right): shop · requests · inbox · legal · about · version ----------
+
+    private fun buildSettings() {
+        val scrim = View(this).apply { setBackgroundColor(Color.argb(140, 10, 6, 16)); visibility = View.GONE }
+        scrim.setOnClickListener { toggleSettings(false) }
+        root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        settingsScrim = scrim
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = G.glass(this@MainActivity, 0, fillAlpha = 46)
+            setPadding(G.dp(this@MainActivity, 16), G.dp(this@MainActivity, 20), G.dp(this@MainActivity, 16), G.dp(this@MainActivity, 16))
+        }
+        val w = (resources.displayMetrics.widthPixels * 0.86f).toInt()
+        panel.addView(TextView(this).apply {
+            text = "SETTINGS"; textSize = 17f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+            setPadding(0, 0, 0, G.dp(this@MainActivity, 6))
+        })
+
+        fun row(label: String, id: String): TextView {
+            val t = TextView(this).apply {
+                text = label; textSize = 15f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+                background = G.glass(this@MainActivity, 12, fillAlpha = 24)
+                setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 13), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 13))
+            }
+            t.setOnClickListener {
+                when (id) {
+                    "identity" -> {
+                        toggleSettings(false)
+                        if (Api.cookieValue.isBlank()) showRelink() else {
+                            val gid = stateJson?.optString("gid", "") ?: ""
+                            AlertDialog.Builder(this)
+                                .setTitle("Identity")
+                                .setMessage(if (gid.isNotBlank()) "You are $gid — one identity across the bots, the web and this app.\n\nLog out of this device?" else "Linked, but the identity is still loading. Try again in a second.")
+                                .setPositiveButton("Log out") { _, _ -> runIntent(Intents.Result(Intents.Kind.LOGOUT)) }
+                                .setNegativeButton("Keep", null).show()
+                        }
+                    }
+                    "version" -> {
+                        toggleSettings(false)
+                        checkForUpdate(true)
+                    }
+                    else -> {
+                        toggleSettings(false)
+                        when (id) {
+                            "shop" -> openWeb("shop")
+                            "requests" -> openWeb("requests")
+                            "inbox" -> openInbox()
+                            "legal" -> openWeb("legal")
+                            "about" -> openWeb("about")
+                        }
+                    }
+                }
+            }
+            return t
+        }
+        panel.addView(row("🛍 SHOP — packs · pro · themes", "shop"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row("🗳 REQUESTS — the feature wall", "requests"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row("📥 INBOX — from the admin", "inbox"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row("⚖ LEGAL", "legal"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row("ℹ ABOUT", "about"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        val ver = "APP VERSION · v${versionName()}"
+        panel.addView(row(ver, "version"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row("🪪 IDENTITY — link / log out", "identity"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+
+        root.addView(panel, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.END })
+        panel.translationX = w.toFloat()
+        settingsPanel = panel
+    }
+
+    private fun toggleSettings(open: Boolean) {
+        val p = settingsPanel ?: return
+        val w = p.layoutParams.width.toFloat()
+        p.animate().translationX(if (open) 0f else w).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
+        settingsScrim?.visibility = if (open) View.VISIBLE else View.GONE
+        settingsScrim?.animate()?.alpha(if (open) 1f else 0f)?.setDuration(240)?.start()
+    }
+
+    private fun showRelink() {
+        for (i in 0 until chatColumn.childCount) {
+            val v = chatColumn.getChildAt(i)
+            if (v.tag == "relink") { chatColumn.removeView(v); break }
+        }
+        // simple inline re-link strip
+        val strip = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; tag = "relink" }
+        val input = EditText(this).apply {
+            hint = "GENJ-XXXX"; maxLines = 1; textSize = 14f
+            setTextColor(G.CREAM); typeface = Typeface.MONOSPACE
+            background = G.glass(this@MainActivity, 12, fillAlpha = 40)
+            setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 10), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 10))
+        }
+        val go = G.brutal(this, "LINK", radiusDp = 10)
+        go.setOnClickListener {
+            val code = input.text.toString().trim().uppercase(java.util.Locale.US)
+            if (code.length < 6) return@setOnClickListener
+            go.text = "…"
+            Thread {
+                val (ok, err) = Api.link(code)
+                runOnUiThread {
+                    go.text = "LINK"
+                    if (ok) {
+                        Store.prefs().edit().putString("cookie", Api.cookieValue).apply()
+                        pushCookieEverywhere()
+                        chatColumn.removeView(strip)
+                        refreshAll()
+                        Toast.makeText(this, "linked", Toast.LENGTH_SHORT).show()
+                    } else Toast.makeText(this, err, Toast.LENGTH_SHORT).show()
+                }
+            }.start()
+        }
+        strip.addView(input)
+        strip.addView(go, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 8) })
+        chatColumn.addView(strip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    // ---------- inbox: announcements from the admin ----------
+
+    private fun buildInbox() {
+        val screen = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = G.glass(this@MainActivity, 0, fillAlpha = 58)
+            setPadding(G.dp(this@MainActivity, 16), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 16), G.dp(this@MainActivity, 14))
+            visibility = View.GONE
+        }
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(TextView(this).apply {
+            text = "INBOX"; textSize = 17f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(TextView(this).apply {
+            text = "✕"; textSize = 16f; typeface = G.black(this@MainActivity); setTextColor(G.MUTED)
+            setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 4), G.dp(this@MainActivity, 4), G.dp(this@MainActivity, 4))
+            setOnClickListener { inboxScreen?.visibility = View.GONE }
+        })
+        screen.addView(head)
+        screen.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)).apply { topMargin = G.dp(this, 8); bottomMargin = G.dp(this, 10) })
+        val scroll = ScrollView(this)
+        inboxList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(inboxList)
+        screen.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(screen, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        inboxScreen = screen
+    }
+
+    private fun openInbox() {
+        toggleDrawer(false); toggleSettings(false)
+        val list = inboxList ?: return
+        list.removeAllViews()
+        val items = stateJson?.optJSONArray("announcements") ?: JSONArray()
+        val lastSeen = Store.prefs().getLong("annSeen", 0)
+        if (items.length() == 0) {
+            list.addView(TextView(this).apply {
+                text = "nothing yet — announcements from the admin land right here"; textSize = 13f
+                setTextColor(G.MUTED); setPadding(0, G.dp(this@MainActivity, 24), 0, 0); gravity = Gravity.CENTER
+            })
+        }
+        for (i in items.length() - 1 downTo 0) {
+            val o = items.getJSONObject(i)
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = G.glass(this@MainActivity, 14, fillAlpha = 40)
+                setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 11), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 11))
+            }
+            val unread = o.optLong("ts", 0) > lastSeen
+            if (unread) {
+                card.addView(View(this).apply {
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(G.PINK) }
+                }, LinearLayout.LayoutParams(G.dp(this, 8), G.dp(this, 8)).apply { bottomMargin = G.dp(this, 5) })
+            }
+            card.addView(TextView(this).apply {
+                text = o.optString("text", ""); textSize = 13.5f; setTextColor(G.CREAM)
+                setLineSpacing(G.dp(this@MainActivity, 2).toFloat(), 1f)
+            })
+            card.addView(TextView(this).apply {
+                text = "from the admin · ${timeAgo(o.optLong("ts", 0))}"; textSize = 10.5f; setTextColor(G.MUTED)
+                setPadding(0, G.dp(this@MainActivity, 5), 0, 0)
+            })
+            list.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 8) })
+        }
+        Store.prefs().edit().putLong("annSeen", System.currentTimeMillis()).apply()
+        inboxDot?.visibility = View.GONE
+        inboxScreen?.visibility = View.VISIBLE
+    }
+
+    // ---------- web overlay (shop / requests / legal / about) + AdMob banner ----------
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun buildWebFrame() {
+        val frame = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(G.INK)
+            visibility = View.GONE
+        }
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 10), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 10))
+        }
+        webTitle = TextView(this).apply {
+            text = "SHOP"; textSize = 15f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
+        }
+        head.addView(webTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(TextView(this).apply {
+            text = "✕"; textSize = 16f; typeface = G.black(this@MainActivity); setTextColor(G.MUTED)
+            setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 4), G.dp(this@MainActivity, 4), G.dp(this@MainActivity, 4))
+            setOnClickListener { webFrame?.visibility = View.GONE }
+        })
+        frame.addView(head)
+        frame.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)))
+
+        webView = WebView(this).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            setBackgroundColor(Color.TRANSPARENT)
+            webViewClient = object : WebViewClient() {
+                @Deprecated("Deprecated in Java")
+                override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+                    return if (url.startsWith("https://orubus-ai.vercel.app")) false
+                    else {
+                        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
+                        true
+                    }
+                }
+            }
+        }
+        frame.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        bannerSlot = FrameLayout(this).apply { visibility = View.GONE }
+        frame.addView(bannerSlot, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        root.addView(frame, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        webFrame = frame
+    }
+
+    private fun openWeb(target: String) {
+        val (title, url) = webTargets[target] ?: return
+        webTitle?.text = title
+        pushCookieEverywhere()
+        webView?.loadUrl(url)
+        webFrame?.visibility = View.VISIBLE
+        renderBanner(target == "shop")
+    }
+
+    private fun pushCookieEverywhere() {
+        if (Api.cookieValue.isBlank()) return
+        try {
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setCookie("https://orubus-ai.vercel.app/", "orubus_web=${Api.cookieValue}; Path=/; Secure; SameSite=Lax")
+            CookieManager.getInstance().flush()
+        } catch (_: Exception) {}
+    }
+
+    // ---------- AdMob ----------
+
+    private var rewardedLoaded: Boolean = false
+
+    private fun admobCfg(): JSONObject? = stateJson?.optJSONObject("app")?.optJSONObject("admob")?.takeIf { it.optBoolean("enabled", false) }
+
+    private fun initAdsIfNeeded() {
+        val cfg = admobCfg() ?: return
+        if (adsReady) return
+        adsReady = true
+        try {
+            com.google.android.gms.ads.MobileAds.initialize(this) {}
+        } catch (_: Exception) { adsReady = false }
+    }
+
+    @Volatile private var adsReady = false
+
+    private fun renderBanner(forShop: Boolean) {
+        val slot = bannerSlot ?: return
+        slot.removeAllViews()
+        val cfg = admobCfg()
+        if (!forShop || cfg == null || !adsReady) { slot.visibility = View.GONE; return }
+        try {
+            val ad = com.google.android.gms.ads.AdView(this)
+            ad.adUnitId = cfg.optString("bannerId", "")
+            ad.adSize = com.google.android.gms.ads.AdSize.BANNER
+            ad.loadAd(com.google.android.gms.ads.AdRequest.Builder().build())
+            slot.addView(ad)
+            slot.visibility = View.VISIBLE
+        } catch (_: Exception) {
+            slot.visibility = View.GONE
+        }
+    }
+
+    private fun watchAd() {
+        val cfg = admobCfg()
+        if (cfg == null) {
+            Toast.makeText(this, "ads aren't on right now", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!adsReady) initAdsIfNeeded()
+        val nonce = Api.adToken()
+        if (nonce.isNullOrBlank()) {
+            Toast.makeText(this, "couldn't start an ad — try again in a moment", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val reward = cfg.optInt("reward", 50)
+        Toast.makeText(this, "loading the ad…", Toast.LENGTH_SHORT).show()
+        try {
+            com.google.android.gms.ads.rewarded.RewardedAd.load(this, cfg.optString("rewardedId", ""),
+                com.google.android.gms.ads.AdRequest.Builder().build(),
+                object : com.google.android.gms.ads.rewarded.RewardedAdLoadCallback() {
+                    override fun onAdFailedToLoad(error: com.google.android.gms.ads.LoadAdError) {
+                        runOnUiThread { Toast.makeText(this@MainActivity, "no ad filled — try again later", Toast.LENGTH_SHORT).show() }
+                    }
+                    override fun onAdLoaded(ad: com.google.android.gms.ads.rewarded.RewardedAd) {
+                        ad.fullScreenContentCallback = object : com.google.android.gms.ads.FullScreenContentCallback() {
+                            override fun onAdDismissedFullScreenContent() { rewardedLoaded = false }
+                        }
+                        runOnUiThread {
+                            ad.show(this@MainActivity) { item ->
+                                Thread {
+                                    val r = Api.adClaim(nonce)
+                                    runOnUiThread {
+                                        if (r?.optBoolean("ok", false) == true) {
+                                            Toast.makeText(this@MainActivity, "+${r.optInt("gained", reward)} SU — straight to your wallet", Toast.LENGTH_LONG).show()
+                                            r.optJSONObject("wallet")?.let { renderWallet(it) }
+                                        } else {
+                                            Toast.makeText(this@MainActivity, r?.optString("error", "reward didn't land") ?: "reward didn't land", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }.start()
+                            }
+                        }
+                    }
+                })
+        } catch (e: Exception) {
+            Toast.makeText(this, "ads aren't ready — ${e.message ?: "try later"}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ---------- wallet + state ----------
+
+    private fun renderWallet(w: JSONObject) {
+        val bal = w.optInt("dailyBal", 0)
+        val max = w.optInt("meterMax", 360)
+        val bonus = w.optInt("bonus", 0)
+        footName?.text = if (w.optString("name", "").isNotBlank()) w.optString("name") else "friend"
+        footBal?.text = "$bal / $max SU · refills in ~${w.optInt("resetsInH", 0)}h"
+        footBonus?.visibility = if (bonus > 0) View.VISIBLE else View.GONE
+        footBonus?.text = "+${bonus}"
+        val pct = Math.max(0.04f, Math.min(1f, bal / Math.max(1f, max.toFloat())))
+        footMeter?.post {
+            footMeterFill?.layoutParams = FrameLayout.LayoutParams(
+                ((footMeter?.width ?: 0) * pct).toInt().coerceAtLeast(1), ViewGroup.LayoutParams.MATCH_PARENT)
+            footMeterFill?.requestLayout()
+        }
+        // chips show live costs
+        val tiers = w.optJSONObject("tiers")
+        if (tiers != null) {
+            for (c in modeChips) {
+                val t = c.tag as? String ?: continue
+                val cost = tiers.optInt(t, 0)
+                val label = when (t) { "lite" -> "QUICK"; "pro" -> "DEEP"; else -> "CHAT" }
+                c.text = if (cost > 0) "$label · $cost" else label
+            }
+        }
+    }
+
+    private fun renderWalletText(w: JSONObject): String {
+        val bal = w.optInt("dailyBal", 0)
+        val max = w.optInt("meterMax", 360)
+        val bonus = w.optInt("bonus", 0)
+        val tiers = w.optJSONObject("tiers")
+        val costs = tiers?.let { "QUICK ${it.optInt("lite", 0)} · CHAT ${it.optInt("standard", 0)} · DEEP ${it.optInt("pro", 0)}" } ?: ""
+        val filled = Math.round(Math.max(0.0, Math.min(1.0, bal.toDouble() / Math.max(1, max))) * 10).toInt()
+        return "⚡ $bal / $max SU${if (bonus > 0) " · bonus +$bonus (yours forever)" else ""}\n" +
+            "█".repeat(filled) + "░".repeat(10 - filled) + "\n" +
+            "costs: $costs · refills in ~${w.optInt("resetsInH", 0)}h"
+    }
+
+    private fun refreshAll() {
+        renderDrawerChats()
+        if (Api.cookieValue.isBlank()) {
+            footName?.text = "friend"; footGid?.text = "not linked — gear → identity"
+            footBal?.text = "— / — SU"
+            adButton?.visibility = View.GONE
+            chatStatus?.text = "your connection · your lane · not linked"
+            return
+        }
+        adButton?.visibility = View.VISIBLE
+        Thread {
+            try {
+                val st = Api.post("state")
+                stateJson = st
+                val app = st.optJSONObject("app")
+                app?.optJSONObject("models")?.let { mm ->
+                    val map = mutableMapOf<String, String>()
+                    for (k in listOf("lite", "standard", "pro")) {
+                        val v = mm.optString(k, "")
+                        if (v.isNotBlank()) map[k] = v
+                    }
+                    if (map.isNotEmpty()) DuckEngine.models = map
+                }
+                prelude = st.optString("prelude", "")
+                runOnUiThread {
+                    st.optJSONObject("wallet")?.let { renderWallet(it) }
+                    footGid?.text = st.optString("gid", "").ifBlank { "linked" }
+                    initAdsIfNeeded()
+                    // inbox badge
+                    val items = st.optJSONArray("announcements") ?: JSONArray()
+                    val lastSeen = Store.prefs().getLong("annSeen", 0)
+                    var unread = 0
+                    for (i in 0 until items.length()) if (items.getJSONObject(i).optLong("ts", 0) > lastSeen) unread++
+                    inboxDot?.visibility = if (unread > 0) View.VISIBLE else View.GONE
+                }
+            } catch (_: Exception) {
+                runOnUiThread { footGid?.text = "offline — retrying later" }
+            }
+        }.start()
     }
 
     // ---------- continuous updates (GitHub Releases) ----------
 
-    private fun checkForUpdate() {
+    private fun versionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    } catch (_: Exception) { "?" }
+
+    private fun checkForUpdate(explicit: Boolean = false) {
         Thread {
             try {
                 val rel = Api.get("https://api.github.com/repos/${Api.APP_REPO}/releases/latest")
                 val tag = rel.optString("tag_name", "").removePrefix("v")
-                val cur = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+                val cur = versionName()
                 if (isNewer(tag, cur)) {
                     val asset = (rel.optJSONArray("assets") ?: JSONArray())
                         .let { arr -> (0 until arr.length()).map { arr.getJSONObject(it) } }
@@ -474,9 +1113,11 @@ class MainActivity : Activity() {
                             .setNegativeButton("Later", null)
                             .show()
                     }
+                } else if (explicit) {
+                    runOnUiThread { Toast.makeText(this, "you're on the latest — v$cur", Toast.LENGTH_SHORT).show() }
                 }
-            } catch (_: Exception) {
-                /* update checks never bother anyone */
+            } catch (e: Exception) {
+                if (explicit) runOnUiThread { Toast.makeText(this, "couldn't check — ${e.message ?: "later"}", Toast.LENGTH_SHORT).show() }
             }
         }.start()
     }
@@ -491,30 +1132,35 @@ class MainActivity : Activity() {
         return false
     }
 
-    // ---------- helpers ----------
+    // ---------- misc ----------
 
-    private fun pushCookieToWebViews() {
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setCookie("https://orubus-ai.vercel.app/", "orubus_web=${Api.cookieValue}; Path=/; Secure; SameSite=Lax")
-        CookieManager.getInstance().flush()
-        tabWebViews.values.forEach { pushCookieTo(it) }
+    private fun timeAgo(ts: Long): String {
+        if (ts <= 0) return "just now"
+        val s = Math.max(1, (System.currentTimeMillis() - ts) / 1000)
+        return when {
+            s < 60 -> "${s}s ago"
+            s < 3600 -> "${s / 60}m ago"
+            s < 86400 -> "${s / 3600}h ago"
+            else -> "${s / 86400}d ago"
+        }
     }
-
-    private fun pushCookieTo(wv: WebView) {
-        if (Api.cookieValue.isBlank()) return
-        CookieManager.getInstance().setCookie("https://orubus-ai.vercel.app/", "orubus_web=${Api.cookieValue}; Path=/; Secure; SameSite=Lax")
-        CookieManager.getInstance().flush()
-    }
-
-    private fun round(color: Int, radiusPx: Int): GradientDrawable =
-        GradientDrawable().apply { setColor(color); cornerRadius = radiusPx.toFloat() }
-
-    private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        val visibleWv = tabWebViews.values.firstOrNull { it.visibility == View.VISIBLE }
-        if (visibleWv != null && visibleWv.canGoBack()) visibleWv.goBack()
-        else moveTaskToBack(true)
+        when {
+            webFrame?.visibility == View.VISIBLE -> {
+                val wv = webView
+                if (wv != null && wv.canGoBack()) wv.goBack() else webFrame?.visibility = View.GONE
+            }
+            inboxScreen?.visibility == View.VISIBLE -> inboxScreen?.visibility = View.GONE
+            settingsPanel?.translationX == 0f -> toggleSettings(false)
+            drawerPanel?.translationX == 0f -> toggleDrawer(false)
+            else -> moveTaskToBack(true)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Solver.detach()
     }
 }
