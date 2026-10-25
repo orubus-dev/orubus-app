@@ -27,9 +27,6 @@ import org.json.JSONObject
 
 // ---------- detail container ----------
 
-internal var MainActivity.detailTitle: TextView? = null
-internal var MainActivity.detailCont: LinearLayout? = null
-
 internal fun MainActivity.buildDetail() {
     val scrim = View(this).apply { setBackgroundColor(Color.argb(120, 20, 20, 20)); visibility = View.GONE }
     scrim.setOnClickListener { closeDetail() }
@@ -316,7 +313,7 @@ private fun MainActivity.wallCard(o: JSONObject, refresh: () -> Unit): View {
     val comments = o.optJSONArray("comments") ?: JSONArray()
     val commentBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
     if (comments.length() > 0) {
-        commentBox.addView(View(this).apply { setBackgroundColor(W.theme.ink) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply { setPadding(0, dp(6), 0, 0) })
+        commentBox.addView(View(this).apply { setBackgroundColor(W.theme.ink) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)).apply { topMargin = dp(6) })
         for (i in 0 until comments.length()) {
             val cm = comments.getJSONObject(i)
             commentBox.addView(W.label(this, "💬 ${cm.optString("text", "")}", 12.5f, W.theme.ink).apply { setPadding(0, dp(7), 0, 0) })
@@ -330,7 +327,7 @@ private fun MainActivity.wallCard(o: JSONObject, refresh: () -> Unit): View {
         background = W.stroke(this@wallCard, W.theme.bg, 9)
         setPadding(dp(10), dp(8), dp(10), dp(8))
     }
-    commentBox.addView(cInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+    commentBox.addView(cInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     commentBox.addView(W.button(this, "COMMENT", W.theme.acc, W.theme.ink, small = true).apply {
         setOnClickListener {
             val t = cInput.text.toString().trim()
@@ -348,7 +345,7 @@ private fun MainActivity.wallCard(o: JSONObject, refresh: () -> Unit): View {
                 }
             }.start()
         }
-    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(6), 0, 0) })
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
     card.addView(commentBox)
 
     // actions row — vote / comment / dislike, in that order
@@ -371,7 +368,7 @@ private fun MainActivity.wallCard(o: JSONObject, refresh: () -> Unit): View {
     acts.addView(down, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
     acts.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
     acts.addView(cmt)
-    card.addView(acts, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(9), 0, 0) })
+    card.addView(acts, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(9) })
     return card
 }
 
@@ -441,12 +438,12 @@ internal fun MainActivity.buildSheet() {
         overScrollMode = View.OVER_SCROLL_NEVER
         background = GradientDrawable().apply {
             setColor(W.theme.bg)
-            cornerRadii = floatArrayOf(dpf(18), dpf(18), dpf(18), dpf(18), 0f, 0f, 0f, 0f)
+            cornerRadii = floatArrayOf(W.dpf(this, 18), W.dpf(this, 18), W.dpf(this, 18), W.dpf(this, 18), 0f, 0f, 0f, 0f)
             setStroke(dp(2), W.theme.ink)
         }
     }
     val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(20)) }
-    panel.addView(cont, ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    panel.addView(cont, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     screen.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.BOTTOM })
     sheetPanel = panel
 
@@ -479,11 +476,11 @@ internal fun MainActivity.buildSheet() {
     val adCard = card("📺 Watch an ad", "+${stateJson?.optJSONObject("app")?.optJSONObject("admob")?.optInt("reward", 50) ?: 50} SU · straight to the wallet") { body ->
         body.addView(W.button(this, "WATCH · +SU", W.theme.acc, W.theme.ink, small = true).apply {
             setOnClickListener { watchAd() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     val taskCard = card("🎯 Daily tasks", "") { body ->
         body.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; tag = "tasks" },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(6), 0, 0) })
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
     }
     pair(adCard, taskCard)
     renderTasks(taskCard)
@@ -515,12 +512,12 @@ internal fun MainActivity.buildSheet() {
                 }.start()
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
-        body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     val packsCard = card("🛍️ SU packs & refill", "units refresh daily · the shop has the rest") { body ->
         body.addView(W.button(this, "OPEN SHOP", W.theme.paper, W.theme.ink, small = true).apply {
             setOnClickListener { toggleSheet(false); openDetail("shop") }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     pair(redeemCard, packsCard)
 
@@ -541,12 +538,12 @@ internal fun MainActivity.buildSheet() {
                     }
                 }.start()
             }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     val outCard = card("🚪 Disconnect", "ends this session everywhere — re-link needs a fresh code") { body ->
         body.addView(W.button(this, "LOG OUT", W.theme.acc2, W.theme.paper, small = true).apply {
             setOnClickListener { toggleSheet(false); confirmLogout() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     pair(clearCard, outCard)
 
@@ -555,12 +552,12 @@ internal fun MainActivity.buildSheet() {
     val chatsCard = card("💬 Chats", "your threads — name and credits at the foot") { body ->
         body.addView(W.button(this, "OPEN CHATS", W.theme.acc, W.theme.ink, small = true).apply {
             setOnClickListener { toggleSheet(false); toggleDrawer(true) }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     val setCard = card("⚙ Settings", "shop · requests · inbox · identity · version") { body ->
         body.addView(W.button(this, "OPEN SETTINGS", W.theme.paper, W.theme.ink, small = true).apply {
             setOnClickListener { toggleSheet(false); toggleSettings(true) }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(8), 0, 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
     }
     pair(chatsCard, setCard)
 
@@ -590,7 +587,7 @@ internal fun MainActivity.renderTasks(card: LinearLayout) {
         }
         row.addView(track, LinearLayout.LayoutParams(0, dp(7), 1f))
         row.addView(W.label(this, "${have}/${goal}", 11f, W.theme.dim), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) })
-        body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setPadding(0, dp(3), 0, 0) })
+        body.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(3) })
     }
     val streak = stateJson?.optJSONObject("tasks")?.optInt("streak", 0) ?: 0
     if (streak > 0) body.addView(W.label(this, "🔥 $streak-day streak", 11.5f, W.theme.dim).apply { setPadding(0, dp(5), 0, 0) })

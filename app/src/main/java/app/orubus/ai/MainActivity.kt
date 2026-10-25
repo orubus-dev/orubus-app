@@ -75,6 +75,8 @@ class MainActivity : Activity() {
     // ---- detail screens + actions sheet ----
     internal var detailFrame: LinearLayout? = null
     internal var detailScrim: View? = null
+    internal var detailTitle: TextView? = null
+    internal var detailCont: LinearLayout? = null
     internal var sheetPanel: FrameLayout? = null
     internal var sheetScrim: View? = null
     internal var bannerSlot: FrameLayout? = null
@@ -167,11 +169,10 @@ class MainActivity : Activity() {
         val logoRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         logoRow.addView(W.label(this, "⚡ ORUBUS", 26f, W.theme.ink, heavy = 2))
         logoRow.addView(TextView(this).apply {
-            text = "AI"; textSize = 15f; typeface = W.bold(this@showTokenScreen)
+            text = "AI"; textSize = 15f; typeface = W.bold(this@MainActivity)
             setTextColor(W.theme.acc)
             background = GradientDrawable().apply { setColor(W.theme.ink); cornerRadius = dp(6).toFloat() }
             setPadding(dp(7), dp(2), dp(7), dp(2))
-            marginEnd = 0
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8); topMargin = dp(4) })
 
         val title = W.label(this, "LINK YOUR TELEGRAM", 19f, W.theme.ink, heavy = 2)
@@ -180,7 +181,7 @@ class MainActivity : Activity() {
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = W.shadowed(this@showTokenScreen, W.theme.paper, 14, 3)
+            background = W.shadowed(this@MainActivity, W.theme.paper, 14, 3)
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
         card.addView(W.label(this, "same wallet · same memory · one soul\neverywhere — the bots, the web and this app", 13.5f, W.theme.dim))
@@ -192,8 +193,8 @@ class MainActivity : Activity() {
         val input = EditText(this).apply {
             hint = "GENJ-XXXX"; maxLines = 1; textSize = 16f
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
-            typeface = W.medium(this@showTokenScreen)
-            background = W.stroke(this@showTokenScreen, W.theme.paper, 10)
+            typeface = W.medium(this@MainActivity)
+            background = W.stroke(this@MainActivity, W.theme.paper, 10)
             setPadding(dp(14), dp(12), dp(14), dp(12))
         }
         val btn = W.button(this, "LINK", W.theme.acc, W.theme.ink, radiusDp = 12)
@@ -339,7 +340,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(16), dp(14), dp(12))
         }
-        chatScroll!!.addView(chatList, ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        chatScroll!!.addView(chatList, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         page.addView(chatScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
@@ -884,7 +885,7 @@ class MainActivity : Activity() {
             col.addView(W.label(this, sub, 11.5f, W.theme.dim).apply { setPadding(0, dp(1), 0, 0) })
             card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             card.addView(W.label(this, "→", 15f, W.theme.dim, heavy = 2))
-            card.setOnClickListener(onClick)
+            card.setOnClickListener { onClick() }
             return card
         }
 
