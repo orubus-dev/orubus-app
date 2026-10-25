@@ -162,7 +162,7 @@ object W {
         addView(IconView(c, icon, theme.ink), FrameLayout.LayoutParams(dp(c, 19), dp(c, 19), Gravity.CENTER))
     }
 
-    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND }
+    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND, WAVE, IMAGE, DOTS }
 
     /** Hand-drawn icon — 2.1dp rounded ink strokes, centered, never squeezed. */
     class IconView(c: Context, private val icon: Icon, inkColor: Int) : View(c) {
@@ -223,8 +223,41 @@ object W {
                     path.close()
                     canvas.drawPath(path, fill)
                 }
+                Icon.WAVE -> {
+                    // the voice-call mark — a little waveform, rounded bars
+                    val heights = floatArrayOf(0.22f, 0.52f, 0.34f, 0.66f, 0.30f)
+                    val gap = s * 0.185f
+                    val barW = s * 0.085f
+                    val left = cx - (heights.size - 1) * gap / 2f
+                    for ((i, hh) in heights.withIndex()) {
+                        val x = left + i * gap
+                        val half = s * hh / 2f
+                        canvas.drawLine(x, cy - half, x, cy + half, stroke)
+                    }
+                }
+                Icon.IMAGE -> {
+                    // a tiny photograph — frame, sun, mountains
+                    val inset = s * 0.14f
+                    val r = android.graphics.RectF(cx - s / 2f + inset, cy - s / 2f + inset, cx + s / 2f - inset, cy + s / 2f - inset)
+                    canvas.drawRoundRect(r, dp2(c), dp2(c), stroke)
+                    canvas.drawCircle(cx - s * 0.14f, cy - s * 0.12f, s * 0.055f, fill)
+                    val m = Path()
+                    m.moveTo(r.left + s * 0.04f, r.bottom - s * 0.05f)
+                    m.lineTo(cx - s * 0.02f, cy + s * 0.06f)
+                    m.lineTo(cx + s * 0.12f, r.bottom - s * 0.05f)
+                    m.moveTo(cx + s * 0.06f, cy + s * 0.14f)
+                    m.lineTo(cx + s * 0.17f, cy + s * 0.02f)
+                    m.lineTo(r.right - s * 0.04f, r.bottom - s * 0.05f)
+                    canvas.drawPath(m, stroke)
+                }
+                Icon.DOTS -> {
+                    // the "more" mark — three dots, vertical
+                    for (i in -1..1) canvas.drawCircle(cx, cy + i * s * 0.22f, s * 0.06f, fill)
+                }
             }
         }
+
+        private fun dp2(c: Context): Float = c.resources.displayMetrics.density * 2f
     }
 
     /** The progress bar — `.bar` with the `.bar i` fill. Returns (track, fill). */
@@ -254,4 +287,97 @@ object W {
                 floatArrayOf(r, r, r, r, r, r, r, r)
             setStroke(dp(c, 2), theme.ink)
         }
+}
+
+/**
+ * The thinking indicator — three ink dots with a HEARTBEAT: each dot swells
+ * and fades on a staggered rhythm, like the app is literally thinking in
+ * pulses. When deep research fires, the caption beside it reads "thinking…"
+ * and the whole thing is tappable — the interpretation lives in there.
+ */
+class ThinkingDots(c: Context, inkColor: Int) : View(c) {
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = inkColor
+        style = Paint.Style.FILL
+    }
+    private var phase = 0.0
+    private val frame = 33L // ~30fps, cheap
+    private val tick = object : Runnable {
+        override fun run() {
+            phase += 0.13
+            invalidate()
+            postDelayed(this, frame)
+        }
+    }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
+    override fun onDetachedFromWindow() { super.onDetachedFromWindow(); removeCallbacks(tick) }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val s = Math.min(width, height).toFloat()
+        val cy = height / 2f
+        val gap = s * 0.30f
+        val r0 = s * 0.115f
+        val left = width / 2f - gap
+        for (i in 0 until 3) {
+            // the beat: a heartbeat-ish double swell per cycle, staggered per dot
+            val t = (phase - i * 0.55) % (2 * Math.PI)
+            val beat = Math.max(0.0, Math.sin(t)) * 0.65 + Math.max(0.0, Math.sin(t * 2.0 + 0.6)) * 0.35
+            val r = r0 * (0.55 + 0.65 * beat).toFloat()
+            paint.alpha = (70 + 185 * beat).toInt().coerceIn(0, 255)
+            canvas.drawCircle(left + i * gap, cy, r, paint)
+        }
+        paint.alpha = 255
+    }
+}
+
+/**
+ * The call waveform — a wide band of rounded bars breathing like a real
+ * call. `energy` 0..1 sets how alive it looks: listening is lively,
+ * speaking is strong, idle settles to a calm pulse.
+ */
+class WaveView(c: Context, inkColor: Int, accent: Int) : View(c) {
+
+    private val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = accent
+        style = Paint.Style.FILL
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val bars = 28
+    private var phase = 0.0
+
+    @Volatile var energy: Float = 0.55f
+
+    private val tick = object : Runnable {
+        override fun run() {
+            phase += 0.16
+            invalidate()
+            postDelayed(this, 33)
+        }
+    }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(tick) }
+    override fun onDetachedFromWindow() { super.onDetachedFromWindow(); removeCallbacks(tick) }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val mid = h / 2f
+        val gap = w / bars
+        val bw = gap * 0.38f
+        ink.strokeWidth = bw
+        for (i in 0 until bars) {
+            val x = gap * i + gap / 2f
+            val a = Math.sin(phase + i * 0.55)
+            val b = Math.sin(phase * 0.63 + i * 1.31)
+            val c = Math.sin(phase * 1.7 + i * 0.21)
+            val amp = (0.30 + 0.70 * Math.abs(a * 0.55 + b * 0.30 + c * 0.15)) * energy
+            val half = Math.max(0.04f, (amp * h * 0.42f).toFloat())
+            ink.alpha = (110 + 120 * amp).toInt().coerceIn(0, 255)
+            canvas.drawLine(x, mid - half, x, mid + half, ink)
+        }
+    }
 }

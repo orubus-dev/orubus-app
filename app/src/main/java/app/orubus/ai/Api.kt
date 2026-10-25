@@ -121,17 +121,46 @@ object Api {
 
     /**
      * appturn: spend SU for this turn, mint a single-use turn token.
-     * Returns (ok, token, cost, error, walletJSON).
+     * `img` = attached images (each debits the image-understanding price on
+     * the server, inside the SAME token — appfail refunds text + image as
+     * one atom). Returns (ok, token, cost, error, walletJSON).
      */
     @Throws(IOException::class)
-    fun appTurn(text: String, tier: String): TurnSpend {
-        val r = post("appturn", mapOf("text" to text, "tier" to tier))
+    fun appTurn(text: String, tier: String, img: Int = 0): TurnSpend {
+        val r = post("appturn", mapOf("text" to text, "tier" to tier, "img" to img))
         return if (r.optBoolean("ok", false)) {
             TurnSpend(true, r.optString("token"), r.optInt("cost", 0), "", r.optJSONObject("wallet"))
         } else {
             TurnSpend(false, "", 0, r.optString("error", "couldn't spend units"), r.optJSONObject("wallet"))
         }
     }
+
+    /**
+     * appresearch — Deep Research v4.8 + Intent Sensing v1.5, server-sided.
+     * Called invisibly before every linked turn: the server reads the intent
+     * and only when the answer needs what's happening RIGHT NOW does the
+     * deep pass run (charged only when it actually produces). Returns the
+     * research answer + the thinking interpretation the user can tap open.
+     */
+    fun appResearch(text: String, tier: String): ResearchReply {
+        val r = try {
+            post("appresearch", mapOf("text" to text, "tier" to tier))
+        } catch (e: Exception) {
+            return ResearchReply(false, false, "", "") // sensor is best-effort — the lane continues
+        }
+        return ResearchReply(
+            ok = r.optBoolean("ok", false),
+            research = r.optBoolean("research", false),
+            thinking = r.optString("thinking", ""),
+            answer = r.optString("answer", ""),
+            wallet = r.optJSONObject("wallet"),
+        )
+    }
+
+    /** voicecall — meter the live call: `secs` of talk time, voicePerMin per minute. */
+    fun voiceTick(secs: Int): JSONObject? = try {
+        post("voicecall", mapOf("secs" to secs))
+    } catch (_: Exception) { null }
 
     /** appdone: archive the answer + close the token. Fail-soft (history only). */
     fun appDone(token: String, answer: String): JSONObject? = try {
@@ -165,6 +194,13 @@ object Api {
     } catch (_: Exception) { null }
 
     data class TurnSpend(val ok: Boolean, val token: String, val cost: Int, val error: String, val wallet: JSONObject?)
+    data class ResearchReply(
+        val ok: Boolean,
+        val research: Boolean,
+        val thinking: String,
+        val answer: String,
+        val wallet: JSONObject? = null,
+    )
 
     private fun readBody(c: HttpURLConnection): String {
         val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream

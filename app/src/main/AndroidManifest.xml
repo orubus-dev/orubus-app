@@ -3,6 +3,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The voice call: on-device speech recognition needs the mic.
+         Only the recognized words travel — audio never leaves the app. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- AdMob: the advertising ID (Android 13 permission model) -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 

@@ -129,6 +129,20 @@ object DuckEngine {
     class DuckException(val status: Int, message: String) : Exception(message)
     class BusyException(message: String) : Exception(message)
 
+    /**
+     * The device is genuinely offline — thrown the moment an IOException
+     * lands on a dead network so callers can CACHE the turn instead of
+     * burning the retry ladder against a wall that isn't there.
+     */
+    class NetworkDeadException(message: String) : Exception(message)
+
+    /** Cheap connectivity probe (best effort — true when unknowable). */
+    fun netUp(): Boolean = try {
+        val cm = AppCtx.get().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val n = cm.activeNetwork ?: return false
+        cm.getNetworkCapabilities(n)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
+    } catch (_: Exception) { true }
+
     // ---------- the token: alive till it runs out ----------
 
     class Token(val header: String, val signals: String, val journey: String, val mintedAt: Long) {
@@ -293,24 +307,39 @@ object DuckEngine {
                 if (!retryable) throw e
             } catch (e: IOException) {
                 last = e
+                if (!netUp()) throw NetworkDeadException("no lane — the device is offline")
                 pinnedDns.reset() // the network moved — re-pin on the next attempt
             }
         }
         throw BusyException(last?.message ?: "the free lane is catching its breath")
     }
 
-    /** Build the engine message array: prelude + ack + the visible turns. */
-    fun buildMessages(prelude: String, turns: List<Pair<Boolean, String>>): JSONArray {
+    /**
+     * Build the engine message array: prelude + ack + the visible turns.
+     * `imageBase64` rides the LAST user turn as an image content part —
+     * that's how a picture gets understood: the words plus the pixels,
+     * one message, straight from the device.
+     */
+    fun buildMessages(prelude: String, turns: List<Pair<Boolean, String>>, imageBase64: String? = null): JSONArray {
         val arr = JSONArray()
-        fun add(role: String, text: String) {
+        fun add(role: String, text: String, img: String? = null) {
+            val content = JSONArray().put(JSONObject().apply { put("type", "text"); put("text", text) })
+            if (img != null) {
+                content.put(JSONObject().apply { put("type", "img"); put("img_str", img) })
+            }
             arr.put(JSONObject().apply {
                 put("role", role)
-                put("content", JSONArray().put(JSONObject().apply { put("type", "text"); put("text", text) }))
+                put("content", content)
             })
         }
         if (prelude.isNotBlank()) add("user", prelude)
         if (prelude.isNotBlank()) add("assistant", "Got it — I hold all of this in mind as we talk. What's on your mind?")
-        for ((mine, text) in turns.takeLast(20)) add(if (mine) "user" else "assistant", text)
+        val body = turns.takeLast(20)
+        for ((i, pair) in body.withIndex()) {
+            val (mine, text) = pair
+            val isLast = i == body.lastIndex
+            add(if (mine) "user" else "assistant", text, if (mine && isLast) imageBase64 else null)
+        }
         return arr
     }
 }

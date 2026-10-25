@@ -468,7 +468,11 @@ internal fun MainActivity.buildSheet() {
     }
     val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(20)) }
     panel.addView(cont, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-    screen.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.BOTTOM })
+    // HALF the screen, like the web's menu: the content fits in the sheet
+    // and scrolling reveals the rest — never a wall of cards running past
+    // the top edge with no way back down
+    val sheetH = (resources.displayMetrics.heightPixels * 0.56f).toInt()
+    screen.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, sheetH).apply { gravity = Gravity.BOTTOM })
     sheetPanel = panel
 
     fun h2(text: String) {
@@ -620,16 +624,17 @@ internal fun MainActivity.renderTasks(card: LinearLayout) {
 
 internal fun MainActivity.toggleSheet(open: Boolean) {
     val p = sheetPanel ?: return
+    val hidden = p.layoutParams.height.toFloat().coerceAtLeast(resources.displayMetrics.heightPixels * 0.5f)
     if (open) {
         val taskBody = p.findViewWithTag("tasks") as? LinearLayout
         if (taskBody != null) renderTasks(taskBody)
         // rise from fully BELOW the screen — never peek while closed
         p.visibility = View.VISIBLE
-        p.translationY = (resources.displayMetrics.heightPixels * 0.9f)
+        p.translationY = hidden
         p.animate().translationY(0f).setDuration(220).setInterpolator(DecelerateInterpolator()).start()
         sheetScrim?.visibility = View.VISIBLE
     } else {
-        p.animate().translationY((resources.displayMetrics.heightPixels * 0.9f))
+        p.animate().translationY(hidden)
             .setDuration(220).setInterpolator(DecelerateInterpolator())
             .withEndAction { p.visibility = View.GONE }
             .start()

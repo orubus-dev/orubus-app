@@ -15,6 +15,7 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -22,7 +23,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Orubus AI for Android — v3.
+ * Orubus AI for Android — v3.5.5.
  *
  * The whole surface is native Kotlin — zero WebViews — and it wears the
  * exact UI the web app wears (public/chat.html ported view by view): cream
@@ -34,6 +35,15 @@ import org.json.JSONObject
  * turn itself runs on the device with the user's own IP (the request engine),
  * so no shared lane ever packs. Errors speak like Orubus — warm, human,
  * never a raw engine dump.
+ *
+ * v3.5.5: relaunch never re-waits on the wallet (disk-cached state paints
+ * instantly); a dead connection QUEUES the turn and fires it on its own the
+ * second the lane returns; every bubble carries a long-press menu (copy ·
+ * edit prompt · branch · my thinking) anchored right where the finger held;
+ * image understanding rides the vision lane; a real voice call lives behind
+ * the waveform in the header; and Deep Research v4.8 with Intent Sensing
+ * v1.5 reads every message server-side before the lane even starts —
+ * invisible, passive, and its thinking is a tap away.
  */
 class MainActivity : Activity() {
 
@@ -52,9 +62,17 @@ class MainActivity : Activity() {
     internal var chatInput: EditText? = null
     internal var sendBtn: FrameLayout? = null
     internal var dryBanner: TextView? = null
+    internal var attachBtn: FrameLayout? = null
+    internal var imgChip: LinearLayout? = null
+    internal var pendingImg: String? = null
     internal val pills = mutableListOf<TextView>()
     internal var tier = "standard"
     internal var sending = false
+    internal var outboxBusy = false
+
+    // ---- the voice call ----
+    internal var calling = false
+    internal var callTicker: Runnable? = null
 
     // ---- drawer (chats) ----
     internal var drawerPanel: LinearLayout? = null
@@ -100,6 +118,7 @@ class MainActivity : Activity() {
         screen = FrameLayout(this)
         setContentView(screen)
         Solver.ensure(this)
+        watchLane() // the outbox drains itself the second the lane returns
 
         if (!prefs.getBoolean("legal_ok", false)) showLegalGate() else next()
     }
@@ -270,9 +289,40 @@ class MainActivity : Activity() {
             chatList?.addView(sysView("hey — welcome in ⚡\neverything here stays in sync with the bots and the web — one soul, one memory, everywhere.\ntype anything, or try \"open shop\"."),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
+        // the last-known state paints FIRST — coins, name, models, inbox —
+        // so a relaunch never means watching the wallet load again
+        paintCachedState()
         refreshAll()
         DuckEngine.warm() // the lane warms before the first message, not during it
         checkForUpdate()
+    }
+
+    /**
+     * The disk-cached state: wallet, identity, models, prelude — rendered
+     * before the network has a chance to blink. The live refresh replaces
+     * it seconds later (and re-caches it for next launch).
+     */
+    internal fun paintCachedState() {
+        if (Api.cookieValue.isBlank()) return
+        val st = Store.loadState() ?: return
+        stateJson = st
+        st.optJSONObject("app")?.optJSONObject("models")?.let { mm ->
+            val map = mutableMapOf<String, String>()
+            for (k in listOf("lite", "standard", "pro")) {
+                val v = mm.optString(k, "")
+                if (v.isNotBlank()) map[k] = v
+            }
+            if (map.isNotEmpty()) DuckEngine.models = map
+        }
+        prelude = st.optString("prelude", "")
+        st.optJSONObject("wallet")?.let { renderWallet(it) }
+        footGid?.text = st.optString("gid", "").ifBlank { "linked" }
+        val items = st.optJSONArray("announcements") ?: JSONArray()
+        val lastSeen = Store.prefs().getLong("annSeen", 0)
+        var unread = false
+        for (i in 0 until items.length()) if (items.getJSONObject(i).optLong("ts", 0) > lastSeen) unread = true
+        inboxDot?.visibility = if (unread) View.VISIBLE else View.GONE
+        settingsInboxDot?.visibility = if (unread) View.VISIBLE else View.GONE
     }
 
     internal fun dp(v: Int): Int = W.dp(this, v)
@@ -288,7 +338,8 @@ class MainActivity : Activity() {
         }
 
         val logoRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        logoRow.addView(W.label(this, "⚡ ORUBUS", 16f, W.theme.ink, heavy = 2))
+        // the bolt is gone from the top left — the wordmark stands on its own
+        logoRow.addView(W.label(this, "ORUBUS", 16f, W.theme.ink, heavy = 2))
         logoRow.addView(TextView(this).apply {
             text = "AI"; textSize = 10.5f; typeface = W.bold(this@MainActivity)
             setTextColor(W.theme.acc)
@@ -303,7 +354,7 @@ class MainActivity : Activity() {
             textSize = 12f; typeface = W.bold(this@MainActivity); setTextColor(W.theme.ink)
             background = W.shadowed(this@MainActivity, W.theme.paper, 99, 2)
             setPadding(dp(10), dp(4), dp(10), dp(4))
-            maxWidth = (resources.displayMetrics.widthPixels * 0.28f).toInt()
+            maxWidth = (resources.displayMetrics.widthPixels * 0.22f).toInt()
             ellipsize = android.text.TextUtils.TruncateAt.END
             setSingleLine(true)
         }
@@ -314,9 +365,14 @@ class MainActivity : Activity() {
             background = W.shadowed(this@MainActivity, W.theme.pop, 99, 2)
             setPadding(dp(10), dp(4), dp(10), dp(4))
         }
-        bar.addView(bonusChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12) })
+        bar.addView(bonusChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(9) })
 
-        // the two top-right buttons — 36dp drawn-icon targets, real breathing room
+        // the three top-right buttons — the waveform opens the call, then
+        // the chats drawer, then settings. 36dp drawn-icon targets, room to breathe.
+        val wave = W.iconBtn(this, W.Icon.WAVE)
+        wave.setOnClickListener { startVoiceCall() }
+        bar.addView(wave, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(8) })
+
         val burger = W.iconBtn(this, W.Icon.MENU)
         burger.setOnClickListener { toggleDrawer(true) }
         bar.addView(burger, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(8) })
@@ -379,10 +435,33 @@ class MainActivity : Activity() {
         }
         inner.addView(tiers)
 
+        // the image chip — appears when a photo is riding the next message
+        imgChip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = W.shadowed(this@MainActivity, W.theme.pop, 99, 2)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            visibility = View.GONE
+        }
+        val chipText = TextView(this).apply {
+            textSize = 12f; typeface = W.bold(this@MainActivity); setTextColor(W.theme.ink)
+        }
+        chipText.tag = "text"
+        imgChip!!.addView(chipText)
+        imgChip!!.addView(TextView(this).apply {
+            text = "  ✕"; textSize = 12f; typeface = W.bold(this@MainActivity); setTextColor(W.theme.acc2)
+            setOnClickListener { clearPendingImage() }
+        })
+        inner.addView(imgChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(7) })
+
         val sendrow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
         }
+        attachBtn = W.iconBtn(this, W.Icon.IMAGE, W.theme.paper)
+        attachBtn!!.setOnClickListener { pickImage() }
+        sendrow.addView(attachBtn, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(7) })
+
         chatInput = EditText(this).apply {
             hint = "Message Orubus…"; textSize = 14.5f; maxLines = 4
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
@@ -395,7 +474,7 @@ class MainActivity : Activity() {
 
         sendBtn = W.iconBtn(this, W.Icon.SEND)
         sendBtn!!.setOnClickListener { sendChat() }
-        sendrow.addView(sendBtn, LinearLayout.LayoutParams(dp(52), dp(44)).apply { marginStart = dp(9) })
+        sendrow.addView(sendBtn, LinearLayout.LayoutParams(dp(52), dp(44)).apply { marginStart = dp(7) })
         inner.addView(sendrow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
 
         composer.addView(inner)
@@ -403,10 +482,28 @@ class MainActivity : Activity() {
 
         sendBtn!!.alpha = 0.45f
         chatInput?.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) { sendBtn?.alpha = if (s.isNullOrBlank()) 0.45f else 1f }
+            override fun afterTextChanged(s: Editable?) { sendBtn?.alpha = if (s.isNullOrBlank() && pendingImg == null) 0.45f else 1f }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
+    }
+
+    internal fun imageCost(): Int = try {
+        stateJson?.optJSONObject("app")?.optInt("imageCost", 20) ?: 20
+    } catch (_: Exception) { 20 }
+
+    internal fun setPendingImage(base64: String) {
+        pendingImg = base64
+        val chip = imgChip ?: return
+        (chip.findViewWithTag("text") as? TextView)?.text = "🖼 image attached · ${imageCost()} SU"
+        chip.visibility = View.VISIBLE
+        sendBtn?.alpha = 1f
+    }
+
+    internal fun clearPendingImage() {
+        pendingImg = null
+        imgChip?.visibility = View.GONE
+        sendBtn?.alpha = if (chatInput?.text.isNullOrBlank()) 0.45f else 1f
     }
 
     internal fun selectTier(t: String) {
@@ -451,6 +548,7 @@ class MainActivity : Activity() {
     internal fun pushUser(text: String): TextView {
         hideHello()
         val tv = bubble(text, "u")
+        attachMsgMenu(tv, mine = true, text = text)
         chatList?.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.END; topMargin = dp(6)
         })
@@ -458,10 +556,22 @@ class MainActivity : Activity() {
         return tv
     }
 
-    internal fun pushBot(text: String): TextView {
+    internal fun pushBot(text: String, think: String = ""): TextView {
         hideHello()
         val tv = bubble(text, "a")
+        attachMsgMenu(tv, mine = false, text = text, think = think)
         chatList?.addView(tv)
+        if (think.isNotBlank()) {
+            // the thinking stays one tap away — a quiet chip under the answer
+            val chip = TextView(this).apply {
+                text = "💭 my thinking"; textSize = 11.5f
+                setTextColor(W.theme.dim); typeface = W.medium(this@MainActivity)
+                setPadding(dp(2), dp(3), dp(2), dp(3))
+                W.press(this)
+            }
+            chip.setOnClickListener { showThinking("what went through me", think) }
+            chatList?.addView(chip)
+        }
         scrollEnd()
         return tv
     }
@@ -500,18 +610,48 @@ class MainActivity : Activity() {
         return tv
     }
 
-    internal fun typing(): TextView {
+    /**
+     * The typing indicator — three dots with a heartbeat, not a static
+     * ellipsis. When deep research fires the caption beside it reads
+     * "thinking…" and the whole row is tappable: the interpretation lives
+     * in there, exactly where the user expects to peek at it.
+     */
+    internal fun typing(): FrameLayout {
         hideHello()
-        val tv = TextView(this).apply {
-            text = "●  ●  ●"; textSize = 11f; setTextColor(W.theme.dim)
-            setPadding(dp(2), dp(6), dp(2), dp(6))
+        val row = FrameLayout(this).apply { setPadding(dp(2), dp(6), dp(2), dp(6)) }
+        val dotsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        dotsRow.addView(ThinkingDots(this, W.theme.ink), FrameLayout.LayoutParams(dp(34), dp(14)))
+        val cap = TextView(this).apply {
+            text = ""; textSize = 11.5f; setTextColor(W.theme.dim)
+            typeface = W.medium(this@MainActivity)
         }
-        chatList?.addView(tv)
+        cap.tag = "cap"
+        dotsRow.addView(cap)
+        row.addView(dotsRow, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.tag = "think:"
+        row.setOnClickListener {
+            val t = (row.tag as? String)?.removePrefix("think:").orEmpty()
+            showThinking(
+                if (t.isBlank()) "still forming"
+                else "what went through me",
+                t.ifBlank { "the interpretation lands here the second it forms — right now every lane is just working on your words." }
+            )
+        }
+        chatList?.addView(row)
         scrollEnd()
-        return tv
+        return row
     }
 
-    internal fun removeView(v: TextView?) { if (v != null) chatList?.removeView(v) }
+    internal fun markThinking(dots: FrameLayout?, thinking: String) {
+        dots?.tag = "think:$thinking"
+        (dots?.findViewWithTag("cap") as? TextView)?.text = " thinking…"
+    }
+
+    internal fun showThinking(title: String, body: String) {
+        orubusDialog(title, body, "GOT IT")
+    }
+
+    internal fun removeView(v: View?) { if (v != null) chatList?.removeView(v) }
 
     private fun scrollEnd() {
         chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
@@ -552,87 +692,359 @@ class MainActivity : Activity() {
                 when {
                     m.system -> pushSys(m.text)
                     m.mine -> pushUser(m.text)
-                    else -> pushBot(m.text)
+                    else -> pushBot(m.text, m.think)
                 }
             }
         }
     }
 
-    // ---------- sending: intents first, then the on-device engine ----------
+    // ---------- long-press menus (anchored where the finger held) ----------
+
+    /**
+     * A deliberate press — never a tap, never a scroll — opens the message
+     * menu AT the finger: copy, edit prompt (own words), branch the chat and
+     * my thinking (my answers). The popup is a house card, clamped to the
+     * screen, and it only ever appears from a real long-press, so nothing is
+     * ever mistakenly clickable.
+     */
+    internal fun attachMsgMenu(v: TextView, mine: Boolean, text: String, think: String = "") {
+        val touch = floatArrayOf(0f, 0f)
+        val off = W.dpf(this, 2)
+        v.setOnTouchListener { vv, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    touch[0] = ev.rawX; touch[1] = ev.rawY
+                    vv.animate().translationX(off).translationY(off).setDuration(40).start()
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                    vv.animate().translationX(0f).translationY(0f).setDuration(40).start()
+            }
+            false // never consume — long-click still fires
+        }
+        v.setOnLongClickListener {
+            try { performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } catch (_: Exception) {}
+            val items = mutableListOf<Triple<String, Boolean, () -> Unit>>() // label, danger, action
+            items.add(Triple("Copy", false) {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("orubus", text))
+                Toast.makeText(this, "copied ⚡", Toast.LENGTH_SHORT).show()
+            })
+            if (mine) {
+                items.add(Triple("Edit prompt", false) {
+                    chatInput?.setText(text)
+                    chatInput?.requestFocus()
+                    chatInput?.setSelection(text.length)
+                    pushSys("prompt loaded — shape it and send it again")
+                })
+            } else {
+                if (think.isNotBlank()) {
+                    items.add(Triple("My thinking", false) { showThinking("what went through me", think) })
+                }
+                items.add(Triple("Branch from here", false) {
+                    val chat = Store.currentChat()
+                    val idx = chat.msgs.indexOfFirst { !it.system && !it.mine && it.text == text }
+                    if (idx >= 0) {
+                        Store.branchChat(chat, idx)
+                        loadCurrentChat()
+                        pushSys("branched — this thread forks from here, the original stays untouched")
+                    }
+                })
+            }
+            showFingerMenu(v, touch[0], touch[1], items)
+            true
+        }
+    }
+
+    /** The menu card itself — house style, pinned to the touch point. */
+    private fun showFingerMenu(anchor: View, rawX: Float, rawY: Float, items: List<Triple<String, Boolean, () -> Unit>>) {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        for ((label, danger, action) in items) {
+            val row = TextView(this).apply {
+                text = label; textSize = 13.5f; typeface = W.medium(this@showFingerMenu)
+                setTextColor(if (danger) W.theme.acc2 else W.theme.ink)
+                background = W.stroke(this@showFingerMenu, W.theme.paper, 8)
+                setPadding(dp(16), dp(11), dp(16), dp(11))
+                W.press(this)
+            }
+            row.setOnClickListener {
+                popup?.dismiss()
+                action()
+            }
+            col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = if (col.childCount == 0) 0 else dp(6)
+            })
+        }
+        val card = FrameLayout(this).apply {
+            background = W.shadowed(this@showFingerMenu, W.theme.paper, 12, 3)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+        }
+        card.addView(col)
+        val pw = PopupWindow(card, dp(190), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        pw.isOutsideTouchable = true
+        pw.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        popup = pw
+        // anchor at the finger, clamped so the card never leaves the screen
+        val dm = resources.displayMetrics
+        var x = (rawX - dp(95)).toInt()
+        x = Math.max(dp(8), Math.min(x, dm.widthPixels - dp(198)))
+        val cardH = items.size * dp(48) + dp(24)
+        var y = (rawY + dp(10)).toInt()
+        y = Math.min(y, Math.max(dp(8), dm.heightPixels - cardH - dp(24)))
+        try { pw.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y) } catch (_: Exception) {}
+    }
+
+    internal var popup: PopupWindow? = null
+
+    // ---------- the photo lane ----------
+
+    internal fun pickImage() {
+        try {
+            val i = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT)
+            i.type = "image/*"
+            i.addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            startActivityForResult(android.content.Intent.createChooser(i, "ride a photo"), 7725)
+        } catch (_: Exception) {
+            Toast.makeText(this, "couldn't open the gallery", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 7725 || resultCode != RESULT_OK || data?.data == null) return
+        Thread {
+            val b64 = decodeScaledBase64(data.data!!)
+            runOnUiThread {
+                if (b64 == null) Toast.makeText(this, "that image didn't load — try another", Toast.LENGTH_SHORT).show()
+                else setPendingImage(b64)
+            }
+        }.start()
+    }
+
+    /** Downscale + JPEG the picked photo — small, private, one-way. */
+    private fun decodeScaledBase64(uri: android.net.Uri): String? {
+        return try {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0) return null
+            var sample = 1
+            while (Math.max(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            val bmp = contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return null
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+            bmp.recycle()
+            android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+        } catch (_: Exception) { null }
+    }
+
+    // ---------- sending: intents first, then the deep pass, then the on-device engine ----------
 
     internal fun sendChat() {
         if (sending) return
         val text = chatInput?.text?.toString()?.trim().orEmpty()
-        if (text.isEmpty()) return
+        val img = pendingImg
+        if (text.isEmpty() && img == null) return
         chatInput?.setText("")
+        clearPendingImage()
         val chat = Store.currentChat()
-        pushUser(text)
-        Store.append(chat, true, text)
+        val stored = if (img != null) "🖼 $text" else text
+        pushUser(stored)
+        Store.append(chat, true, stored)
 
-        val intent = Intents.match(text)
-        if (intent != null) { runIntent(intent); return }
+        if (img == null) {
+            val intent = Intents.match(text)
+            if (intent != null) { runIntent(intent); return }
+        }
 
+        runTurn(chat, text, imgBase64 = img)
+    }
+
+    /**
+     * One billed turn — the full ladder, exactly as it must feel:
+     *
+     *   linked  → appturn (the wallet, image charges included)
+     *           → appresearch (Deep Research v4.8: invisible, passive,
+     *             server-sided; when it produces, its answer IS the turn
+     *             and its thinking is tappable on the dots)
+     *           → the device duck lane on the user's own steady IP
+     *           → the server's brain as the last resort
+     *   offline → the turn is CACHED in the outbox and fires itself the
+     *             second the lane is back (marked as resent)
+     *
+     * `skipAppend` = the user's words are already in the store (outbox
+     * resend); `silent` = the voice call is driving (no bubbles, the caller
+     * speaks the answer); `fromOutbox` marks a drain pass.
+     */
+    internal fun runTurn(
+        chat: Store.Chat,
+        text: String,
+        imgBase64: String? = null,
+        skipAppend: Boolean = false,
+        silent: Boolean = false,
+        fromOutbox: Boolean = false,
+        onAnswer: ((String) -> Unit)? = null,
+        onError: ((String) -> Unit)? = null,
+    ) {
+        if (sending) return
+        if (!DuckEngine.netUp()) {
+            if (!fromOutbox && !silent) {
+                Store.enqueueOutbox(chat.id, text, imgBase64 != null)
+                pushSys("no lane right now — your words are saved and will go out on their own the second the connection is back ⚡")
+            }
+            onError?.invoke("offline")
+            return
+        }
         sending = true
         sendBtn?.isEnabled = false
-        val dots = typing()
+        val dots = if (silent) null else typing()
         Thread {
             val linked = Api.cookieValue.isNotBlank()
             var token = ""
             try {
                 if (linked) {
-                    val spend = Api.appTurn(text, tier)
+                    val spend = Api.appTurn(text, tier, if (imgBase64 != null) 1 else 0)
                     if (!spend.ok) {
                         runOnUiThread {
                             removeView(dots)
-                            pushErr(spend.error)
-                            spend.wallet?.let { renderWallet(it) }
+                            if (silent) onError?.invoke(spend.error) else {
+                                pushErr(spend.error)
+                                spend.wallet?.let { renderWallet(it) }
+                            }
                         }
                         sending = false
-                        sendBtn?.isEnabled = true
+                        runOnUiThread { sendBtn?.isEnabled = true }
                         return@Thread
                     }
                     token = spend.token
                     spend.wallet?.let { runOnUiThread { renderWallet(it) } }
                 }
-                val turns = Store.turnsOf(chat)
-                val pre = prelude.ifBlank { "You are Orubus — a sharp, warm, slightly playful AI companion. Keep replies tight and human." }
-                val msgs = DuckEngine.buildMessages(pre, turns)
-                val answer = try {
-                    DuckEngine.chat(msgs, DuckEngine.modelFor(tier))
-                } catch (de: Exception) {
-                    // the device lane slipped — the units go straight back first,
-                    // then the server's own brain takes the turn, so chatting
-                    // never dies: same memory, same soul, one more hop
-                    if (linked && token.isNotBlank()) {
-                        val tok = token
-                        Thread { Api.appFail(tok) }.start()
-                        token = ""
+
+                var answer: String? = null
+                var thinking = ""
+                // Deep Research v4.8 + Intent Sensing v1.5 — invisible and
+                // passive: the server reads the intent first, and only a
+                // message that needs what's happening right now gets the
+                // deep pass (charged 7 SU only when it actually produces).
+                if (linked && imgBase64 == null) {
+                    try {
+                        val r = Api.appResearch(text, tier)
+                        r.wallet?.let { runOnUiThread { renderWallet(it) } }
+                        if (r.research && r.answer.isNotBlank()) {
+                            answer = r.answer
+                            thinking = r.thinking
+                            if (dots != null) runOnUiThread { markThinking(dots, thinking) }
+                        }
+                    } catch (_: Exception) {
+                        // the sensor is best-effort — the lane continues
                     }
-                    if (!linked) throw de
-                    val fb = Api.post("msg", mapOf("text" to text, "tier" to tier))
-                    runOnUiThread { fb.optJSONObject("wallet")?.let { renderWallet(it) } }
-                    if (!fb.optBoolean("ok", false)) throw Exception(fb.optString("error", "the lane is catching its breath"))
-                    fb.optString("answer", "")
+                }
+
+                if (answer == null) {
+                    val turns = Store.turnsOf(chat)
+                    val pre = prelude.ifBlank { "You are Orubus — a sharp, warm, slightly playful AI companion. Keep replies tight and human." }
+                    val msgs = DuckEngine.buildMessages(pre, turns, imgBase64)
+                    answer = try {
+                        DuckEngine.chat(msgs, DuckEngine.modelFor(tier))
+                    } catch (de: Exception) {
+                        // the device lane slipped — the units go straight back first,
+                        // then the server's own brain takes the turn, so chatting
+                        // never dies: same memory, same soul, one more hop
+                        if (de is DuckEngine.NetworkDeadException) throw de
+                        if (linked && token.isNotBlank()) {
+                            val tok = token
+                            Thread { Api.appFail(tok) }.start()
+                            token = ""
+                        }
+                        if (!linked || imgBase64 != null) throw de
+                        val fb = Api.post("msg", mapOf("text" to text, "tier" to tier))
+                        runOnUiThread { fb.optJSONObject("wallet")?.let { renderWallet(it) } }
+                        if (!fb.optBoolean("ok", false)) throw Exception(fb.optString("error", "the lane is catching its breath"))
+                        fb.optString("answer", "")
+                    }
                 }
                 val doneToken = token
                 if (linked && doneToken.isNotBlank()) Thread { Api.appDone(doneToken, answer) }.start()
+                val finalAnswer = answer
                 runOnUiThread {
                     removeView(dots)
-                    pushBot(answer)
-                    Store.append(chat, false, answer)
+                    if (!silent) {
+                        if (fromOutbox) pushSys("↻ resent — the queued one just went out ⚡")
+                        pushBot(finalAnswer, thinking)
+                    }
+                    Store.append(chat, false, finalAnswer, think = thinking)
+                    onAnswer?.invoke(finalAnswer)
                 }
             } catch (e: Exception) {
                 val failToken = token
                 if (linked && failToken.isNotBlank()) Thread { Api.appFail(failToken) }.start()
+                val dead = e is DuckEngine.NetworkDeadException || !DuckEngine.netUp()
                 runOnUiThread {
                     removeView(dots)
-                    pushErr(laneError(e, linked))
+                    if (dead) {
+                        // the lane died mid-turn: cache it, never punish the user
+                        if (!fromOutbox) {
+                            if (!skipAppend || !silent) {
+                                Store.enqueueOutbox(chat.id, text, imgBase64 != null)
+                                if (!silent) pushSys("the connection slipped mid-thought — your words are queued and will fire the moment the lane is back ⚡")
+                            }
+                        } else if (!silent) {
+                            pushSys("still no lane — the message stays queued and fires the second the connection is back")
+                        }
+                        onError?.invoke("offline")
+                    } else if (silent) {
+                        onError?.invoke(laneError(e, linked))
+                    } else {
+                        pushErr(laneError(e, linked))
+                    }
                 }
             } finally {
                 sending = false
-                runOnUiThread { sendBtn?.isEnabled = true }
+                runOnUiThread {
+                    sendBtn?.isEnabled = true
+                    // keep the outbox moving — one turn at a time
+                    if (outboxBusy) { outboxBusy = false; drainOutbox() }
+                }
             }
         }.start()
+    }
+
+    /**
+     * The outbox — words that outlived a dead connection. The lane watcher
+     * fires this the second the network returns; each turn goes out with the
+     * full ladder and paints with a visible "resent" mark.
+     */
+    internal fun drainOutbox() {
+        if (calling || sending || outboxBusy) return
+        val q = Store.peekOutbox() ?: return
+        val chat = Store.chats().firstOrNull { it.id == q.chatId } ?: Store.currentChat()
+        val sameChat = chat.id == Store.currentChatId()
+        if (chat.msgs.none { it.mine && it.text == q.text }) {
+            // the words never made it into this thread's log — restore them
+            if (sameChat) pushUser(q.text)
+            Store.append(chat, true, q.text)
+        }
+        Store.dropOutboxFirst()
+        if (sameChat && q.img) {
+            pushSys("the image couldn't wait out the dead connection — the words went through alone")
+        }
+        outboxBusy = true
+        runTurn(chat, q.text, imgBase64 = null, skipAppend = true, silent = !sameChat, fromOutbox = true)
+    }
+
+    /**
+     * The lane watcher: the moment ANY network comes back, the outbox
+     * drains itself — no user input, the queued words simply go out.
+     */
+    internal fun watchLane() {
+        try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    runOnUiThread { drainOutbox() }
+                }
+            })
+        } catch (_: Exception) { /* the outbox still drains on next launch */ }
     }
 
     /** Orubus voice for engine hiccups — warm, human, zero engine internals. */
@@ -698,6 +1110,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         Store.prefs().edit().remove("cookie").apply()
                         Api.cookieValue = ""
+                        Store.clearState() // the cached wallet belongs to the session, not the device
                         built = false
                         screen.removeAllViews()
                         showTokenScreen()
@@ -1109,6 +1522,7 @@ class MainActivity : Activity() {
             try {
                 val st = Api.post("state")
                 stateJson = st
+                Store.saveState(st) // the next launch paints from here — no coin-watching
                 val app = st.optJSONObject("app")
                 app?.optJSONObject("models")?.let { mm ->
                     val map = mutableMapOf<String, String>()
@@ -1255,11 +1669,19 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            calling -> {} // the call owns the back button — END ends it
             detailFrame?.visibility == View.VISIBLE -> closeDetail()
             sheetPanel?.visibility == View.VISIBLE && sheetPanel?.translationY == 0f -> toggleSheet(false)
             settingsPanel?.translationY == 0f -> toggleSettings(false)
             drawerPanel?.translationX == 0f -> toggleDrawer(false)
             else -> moveTaskToBack(true)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 4011 && grantResults.isNotEmpty()) {
+            handleMicResult(grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED)
         }
     }
 
