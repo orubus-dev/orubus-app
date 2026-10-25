@@ -434,11 +434,12 @@ internal fun MainActivity.buildSheet() {
     screen.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     sheetScrim = scrim
 
+    val r18 = W.dpf(this, 18)
     val panel = ScrollView(this).apply {
         overScrollMode = View.OVER_SCROLL_NEVER
         background = GradientDrawable().apply {
             setColor(W.theme.bg)
-            cornerRadii = floatArrayOf(W.dpf(this, 18), W.dpf(this, 18), W.dpf(this, 18), W.dpf(this, 18), 0f, 0f, 0f, 0f)
+            cornerRadii = floatArrayOf(r18, r18, r18, r18, 0f, 0f, 0f, 0f)
             setStroke(dp(2), W.theme.ink)
         }
     }

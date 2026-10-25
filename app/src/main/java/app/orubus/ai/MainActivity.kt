@@ -829,11 +829,12 @@ class MainActivity : Activity() {
         settingsScrim = scrim
 
         val h = (resources.displayMetrics.heightPixels * 0.86f).toInt()
+        val r18 = W.dpf(this, 18)
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(W.theme.bg)
-                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, dpf(18), dpf(18), dpf(18), dpf(18))
+                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, r18, r18, r18, r18)
                 setStroke(dp(2), W.theme.ink)
             }
             setPadding(dp(16), dp(18), dp(16), dp(16))
