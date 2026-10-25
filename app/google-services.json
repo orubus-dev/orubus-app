@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "935348055018",
+    "project_id": "orubus-ai",
+    "storage_bucket": "orubus-ai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:935348055018:android:a95c26a1da2b0182452093",
+        "android_client_info": {
+          "package_name": "app.orubus.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuizVq_qj_2f5kY89OG9aeaEjWVxrLrhU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

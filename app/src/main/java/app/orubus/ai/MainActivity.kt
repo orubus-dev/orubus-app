@@ -4,16 +4,20 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
@@ -36,14 +40,14 @@ import org.json.JSONObject
  * so no shared lane ever packs. Errors speak like Orubus — warm, human,
  * never a raw engine dump.
  *
- * v3.5.5: relaunch never re-waits on the wallet (disk-cached state paints
- * instantly); a dead connection QUEUES the turn and fires it on its own the
- * second the lane returns; every bubble carries a long-press menu (copy ·
- * edit prompt · branch · my thinking) anchored right where the finger held;
- * image understanding rides the vision lane; a real voice call lives behind
- * the waveform in the header; and Deep Research v4.8 with Intent Sensing
- * v1.5 reads every message server-side before the lane even starts —
- * invisible, passive, and its thinking is a tap away.
+ * v3.5.8: real photo messages — the picked image renders INSIDE the bubble,
+ * taps open a full-screen pinch-zoom viewer, and the answer relays back on
+ * what's actually in the picture. A dead connection no longer prints a red
+ * apology: the bubble itself carries "network error" + a ↻ resend button,
+ * the words sit in the outbox, and they fire the moment the lane returns.
+ * Ads go fully server-sided: unit ids arrive at load time from our backend
+ * (signed-build attestation), App Open ads ride the return with a 4h cap,
+ * Firebase Analytics streams the console numbers.
  */
 class MainActivity : Activity() {
 
@@ -65,6 +69,7 @@ class MainActivity : Activity() {
     internal var attachBtn: FrameLayout? = null
     internal var imgChip: LinearLayout? = null
     internal var pendingImg: String? = null
+    internal var pendingImgFile: String? = null
     internal val pills = mutableListOf<TextView>()
     internal var tier = "standard"
     internal var sending = false
@@ -125,6 +130,12 @@ class MainActivity : Activity() {
 
     private fun next() {
         if (Api.cookieValue.isBlank()) showTokenScreen() else enterMain()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // back from anywhere: the App Open ad gets its (server-capped) moment
+        maybeAppOpenAd()
     }
 
     // ---------- window chrome ----------
@@ -545,15 +556,40 @@ class MainActivity : Activity() {
         return tv
     }
 
-    internal fun pushUser(text: String): TextView {
+    internal fun pushUser(text: String, img: String = ""): View {
         hideHello()
-        val tv = bubble(text, "u")
-        attachMsgMenu(tv, mine = true, text = text)
-        chatList?.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        val row: View = if (img.isNotBlank()) {
+            // a real photo message — the image INSIDE the bubble column, tap
+            // opens the full-screen viewer, the words ride under it
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
+            val w = (resources.displayMetrics.widthPixels * 0.62f).toInt()
+            val bmp = Store.loadImage(img)
+            if (bmp != null) {
+                val iv = ImageView(this).apply {
+                    val scale = Math.min(1f, w.toFloat() / bmp.width)
+                    layoutParams = LinearLayout.LayoutParams(w, (bmp.height * scale).toInt().coerceAtLeast(dp(80)))
+                    adjustViewBounds = true
+                    clipToOutline = true
+                    outlineProvider = object : ViewOutlineProvider() {
+                        override fun getOutline(view: View, outline: Outline) {
+                            outline.setRoundRect(0, 0, view.width, view.height, dp(14).toFloat())
+                        }
+                    }
+                    background = W.stroke(this@MainActivity, W.theme.acc, 14, 2)
+                    setImageBitmap(bmp)
+                    setOnClickListener { showImageFullScreen(img) }
+                }
+                col.addView(iv)
+            }
+            if (text.isNotBlank()) col.addView(bubble(text, "u"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
+            col
+        } else bubble(text, "u")
+        attachMsgMenu(row, mine = true, text = text)
+        chatList?.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.END; topMargin = dp(6)
         })
         scrollEnd()
-        return tv
+        return row
     }
 
     internal fun pushBot(text: String, think: String = ""): TextView {
@@ -608,6 +644,51 @@ class MainActivity : Activity() {
         chatList?.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8); bottomMargin = dp(4) })
         scrollEnd()
         return tv
+    }
+
+    /**
+     * The network-failed row — a bubble's honest little tail: "network error"
+     * and a ↻ button. No red walls, no lost words: the message already sits
+     * in the outbox, the button fires it NOW, and the lane watcher fires it
+     * the moment the connection is back either way.
+     */
+    internal fun failRow(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), dp(3), dp(2), dp(3))
+        }
+        row.addView(TextView(this).apply {
+            text = "network error"
+            textSize = 11.5f
+            setTextColor(W.theme.acc2)
+            typeface = W.medium(this@MainActivity)
+            setPadding(dp(2), 0, dp(7), 0)
+        })
+        val btn = W.iconBtn(this, W.Icon.RESEND, W.theme.paper)
+        btn.layoutParams = LinearLayout.LayoutParams(dp(27), dp(27))
+        btn.setOnClickListener {
+            it.isEnabled = false
+            Toast.makeText(this, "sending the queued one…", Toast.LENGTH_SHORT).show()
+            drainOutbox()
+        }
+        row.addView(btn)
+        return row
+    }
+
+    /** Bubble + fail row together — how a queued message repaints after a relaunch. */
+    internal fun pushFailed(text: String): LinearLayout {
+        hideHello()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
+        if (text.isNotBlank()) {
+            val tv = bubble(text, "u")
+            attachMsgMenu(tv, mine = true, text = text)
+            box.addView(tv)
+        }
+        box.addView(failRow(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
+        chatList?.addView(box, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        scrollEnd()
+        return box
     }
 
     /**
@@ -691,11 +772,15 @@ class MainActivity : Activity() {
             for (m in msgs) {
                 when {
                     m.system -> pushSys(m.text)
-                    m.mine -> pushUser(m.text)
+                    m.mine -> pushUser(m.text, m.img)
                     else -> pushBot(m.text, m.think)
                 }
             }
         }
+        // words still waiting in the outbox for THIS thread — repaint them as
+        // the honest "network error ↻" pair, not a mystery silence
+        val queued = Store.outbox().firstOrNull { it.chatId == chat.id }
+        if (queued != null && msgs.isNotEmpty()) pushFailed(queued.text)
     }
 
     // ---------- long-press menus (anchored where the finger held) ----------
@@ -707,7 +792,7 @@ class MainActivity : Activity() {
      * screen, and it only ever appears from a real long-press, so nothing is
      * ever mistakenly clickable.
      */
-    internal fun attachMsgMenu(v: TextView, mine: Boolean, text: String, think: String = "") {
+    internal fun attachMsgMenu(v: View, mine: Boolean, text: String, think: String = "") {
         val touch = floatArrayOf(0f, 0f)
         val off = W.dpf(this, 2)
         v.setOnTouchListener { vv, ev ->
@@ -813,16 +898,24 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != 7725 || resultCode != RESULT_OK || data?.data == null) return
         Thread {
-            val b64 = decodeScaledBase64(data.data!!)
+            val bmp = decodeSampled(data.data!!)
             runOnUiThread {
-                if (b64 == null) Toast.makeText(this, "that image didn't load — try another", Toast.LENGTH_SHORT).show()
-                else setPendingImage(b64)
+                if (bmp == null) {
+                    Toast.makeText(this, "that image didn't load — try another", Toast.LENGTH_SHORT).show()
+                } else {
+                    // the real photo message: the image lands on disk (the
+                    // bubble renders it), the base64 twin rides the turn so
+                    // the answer can actually see it
+                    pendingImgFile = Store.saveImage(bmp)
+                    setPendingImage(encodeB64(bmp))
+                    bmp.recycle()
+                }
             }
         }.start()
     }
 
-    /** Downscale + JPEG the picked photo — small, private, one-way. */
-    private fun decodeScaledBase64(uri: android.net.Uri): String? {
+    /** Downscale the picked photo for both the bubble file and the vision turn. */
+    private fun decodeSampled(uri: android.net.Uri): android.graphics.Bitmap? {
         return try {
             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
             contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
@@ -830,13 +923,40 @@ class MainActivity : Activity() {
             var sample = 1
             while (Math.max(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
             val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-            val bmp = contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return null
-            val out = java.io.ByteArrayOutputStream()
-            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-            bmp.recycle()
-            android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
         } catch (_: Exception) { null }
     }
+
+    private fun encodeB64(bmp: android.graphics.Bitmap): String = try {
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+        android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    } catch (_: Exception) { "" }
+
+    // ---------- the photo viewer ----------
+
+    /**
+     * Full-screen viewer — tap a photo in a bubble and it owns the screen:
+     * pinch to zoom, drag to pan, double-tap to snap back, ✕ (or back) to
+     * leave. Exactly how a real attachment behaves.
+     */
+    internal fun showImageFullScreen(name: String) {
+        val bmp = Store.loadImage(name) ?: run {
+            Toast.makeText(this, "that image is gone from this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val overlay = FrameLayout(this).apply { setBackgroundColor(0xEE141414.toInt()) }
+        val zoom = ZoomImage(this)
+        zoom.setImageBitmap(bmp)
+        overlay.addView(zoom, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val close = W.iconBtn(this, W.Icon.CLOSE, W.theme.paper)
+        close.setOnClickListener { screen.removeView(overlay) }
+        overlay.addView(close, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(14), dp(14), 0) })
+        screen.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        imageViewer = overlay
+    }
+
+    internal var imageViewer: FrameLayout? = null
 
     // ---------- sending: intents first, then the deep pass, then the on-device engine ----------
 
@@ -844,13 +964,14 @@ class MainActivity : Activity() {
         if (sending) return
         val text = chatInput?.text?.toString()?.trim().orEmpty()
         val img = pendingImg
+        val imgFile = pendingImgFile
         if (text.isEmpty() && img == null) return
         chatInput?.setText("")
         clearPendingImage()
+        pendingImgFile = null
         val chat = Store.currentChat()
-        val stored = if (img != null) "🖼 $text" else text
-        pushUser(stored)
-        Store.append(chat, true, stored)
+        pushUser(text, imgFile ?: "")
+        Store.append(chat, true, text, img = imgFile ?: "")
 
         if (img == null) {
             val intent = Intents.match(text)
@@ -890,7 +1011,10 @@ class MainActivity : Activity() {
         if (!DuckEngine.netUp()) {
             if (!fromOutbox && !silent) {
                 Store.enqueueOutbox(chat.id, text, imgBase64 != null)
-                pushSys("no lane right now — your words are saved and will go out on their own the second the connection is back ⚡")
+                // the bubble is already on the paper — it gets its honest
+                // tail: "network error" + ↻, and the watcher fires it later
+                chatList?.addView(failRow(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
+                scrollEnd()
             }
             onError?.invoke("offline")
             return
@@ -978,15 +1102,19 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 val failToken = token
                 if (linked && failToken.isNotBlank()) Thread { Api.appFail(failToken) }.start()
-                val dead = e is DuckEngine.NetworkDeadException || !DuckEngine.netUp()
+                val dead = e is DuckEngine.NetworkDeadException || isNetworkFailure(e) || !DuckEngine.netUp()
                 runOnUiThread {
                     removeView(dots)
                     if (dead) {
-                        // the lane died mid-turn: cache it, never punish the user
+                        // the lane died mid-turn: cache it, never punish the user —
+                        // the bubble carries "network error" + a ↻ resend button
                         if (!fromOutbox) {
                             if (!skipAppend || !silent) {
                                 Store.enqueueOutbox(chat.id, text, imgBase64 != null)
-                                if (!silent) pushSys("the connection slipped mid-thought — your words are queued and will fire the moment the lane is back ⚡")
+                                if (!silent) {
+                                    chatList?.addView(failRow(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END })
+                                    scrollEnd()
+                                }
                             }
                         } else if (!silent) {
                             pushSys("still no lane — the message stays queued and fires the second the connection is back")
@@ -1060,6 +1188,38 @@ class MainActivity : Activity() {
             else -> "the lane slipped for a second — try that again"
         }
         return if (linked) "$base — your units went straight back" else base
+    }
+
+    /**
+     * Is this failure actually the NETWORK (vs the lane having a bad second)?
+     * A WiFi icon can lie — the DNS can be dead while the radio reports up —
+     * so anything that smells like an unreachable wire counts as offline:
+     * those turns belong in the outbox with a ↻ on them, never a red apology.
+     */
+    private fun isNetworkFailure(e: Throwable): Boolean {
+        var c: Throwable? = e
+        var hops = 0
+        while (c != null && hops < 6) {
+            if (c is java.net.UnknownHostException ||
+                c is java.net.ConnectException ||
+                c is java.net.SocketTimeoutException ||
+                c is java.net.SocketException ||
+                c is javax.net.ssl.SSLException
+            ) return true
+            val m = (c.message ?: "").lowercase()
+            if (m.contains("unable to resolve host") ||
+                m.contains("failed to connect") ||
+                m.contains("econnrefused") ||
+                m.contains("econnreset") ||
+                m.contains("enetworkunreachable") ||
+                m.contains("network is unreachable") ||
+                m.contains("connection reset") ||
+                m.contains("no lane — the device is offline")
+            ) return true
+            c = c.cause
+            hops++
+        }
+        return false
     }
 
     // ---------- intents ----------
@@ -1669,6 +1829,10 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            imageViewer != null -> {
+                imageViewer?.let { screen.removeView(it) }
+                imageViewer = null
+            }
             calling -> {} // the call owns the back button — END ends it
             detailFrame?.visibility == View.VISIBLE -> closeDetail()
             sheetPanel?.visibility == View.VISIBLE && sheetPanel?.translationY == 0f -> toggleSheet(false)
@@ -1690,4 +1854,93 @@ class MainActivity : Activity() {
         Solver.detach()
     }
 
+}
+
+/**
+ * The pinch-zoom photo view — matrix-based zoom + pan, double-tap to snap
+ * back to fit. Plain android.widget, no appcompat, ~90 lines, built for the
+ * one job: viewing a photo full-screen like a real attachment.
+ */
+private class ZoomImage(c: android.content.Context) : ImageView(c) {
+
+    private val base = Matrix()
+    private val touch = Matrix()
+    private val saved = Matrix()
+    private val start = android.graphics.PointF()
+    private val mid = android.graphics.PointF()
+    private var mode = 0 // 0 = none, 1 = drag, 2 = zoom
+    private val scaleDet = android.view.ScaleGestureDetector(c, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(d: android.view.ScaleGestureDetector): Boolean {
+            mode = 2
+            saved.set(touch)
+            mid.set(d.focusX, d.focusY)
+            return true
+        }
+        override fun onScale(d: android.view.ScaleGestureDetector): Boolean {
+            val f = d.scaleFactor.coerceIn(0.5f, 3.5f)
+            val cur = FloatArray(9)
+            touch.getValues(cur)
+            val next = (cur[Matrix.MSCALE_X] * f).coerceIn(0.6f, 6f)
+            touch.set(saved)
+            touch.postScale(next / cur[Matrix.MSCALE_X], next / cur[Matrix.MSCALE_Y], mid.x, mid.y)
+            imageMatrix = touch
+            return true
+        }
+    })
+
+    init {
+        scaleType = ScaleType.MATRIX
+        val tap = android.view.GestureDetector(c, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: android.view.MotionEvent): Boolean = true
+            override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+                val cur = FloatArray(9)
+                touch.getValues(cur)
+                touch.set(base)
+                if (cur[Matrix.MSCALE_X] <= baseZoom + 0.01f) {
+                    touch.postScale(2.2f, 2.2f, e.x, e.y)
+                }
+                imageMatrix = touch
+                return true
+            }
+        })
+        setOnTouchListener { v, ev ->
+            scaleDet.onTouchEvent(ev)
+            tap.onTouchEvent(ev)
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    mode = 1
+                    saved.set(touch)
+                    start.set(ev.x, ev.y)
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (mode == 1) {
+                        touch.set(saved)
+                        touch.postTranslate(ev.x - start.x, ev.y - start.y)
+                        imageMatrix = touch
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> mode = 0
+            }
+            true
+        }
+    }
+
+    private var baseZoom = 1f
+
+    override fun setImageBitmap(bm: android.graphics.Bitmap?) {
+        super.setImageBitmap(bm)
+        post {
+            val vw = width.toFloat().coerceAtLeast(1f)
+            val vh = height.toFloat().coerceAtLeast(1f)
+            val bw = (bm?.width ?: 1).toFloat()
+            val bh = (bm?.height ?: 1).toFloat()
+            val fit = Math.min(vw / bw, vh / bh)
+            base.reset()
+            base.postScale(fit, fit, vw / 2f, vh / 2f)
+            base.postTranslate((vw - bw * fit) / 2f, (vh - bh * fit) / 2f)
+            baseZoom = fit
+            touch.set(base)
+            imageMatrix = touch
+        }
+    }
 }

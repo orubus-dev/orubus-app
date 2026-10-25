@@ -137,8 +137,12 @@ private fun MainActivity.buildCall() {
 
     var endCallNow: (String) -> Unit = {}
 
+    // barge-in state: the answer currently spoken + whether the human cut in
+    var ttsSpoken = ""
+    var barged = false
+
     // ---- speak an answer, then hand the mic back (back-to-back) ----
-    fun listenAgain() {
+    fun listenAgain(quiet: Boolean = false) {
         if (ended.get()) return
         val rec = recognizer ?: return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -148,8 +152,10 @@ private fun MainActivity.buildCall() {
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
-        setStatus("listening — just talk")
-        waveEnergy(0.62f)
+        if (!quiet) {
+            setStatus("listening — just talk")
+            waveEnergy(0.62f)
+        }
         try { rec.startListening(intent) } catch (_: Exception) {
             main.postDelayed({ try { rec.startListening(intent) } catch (_: Exception) {} }, 600)
         }
@@ -159,8 +165,10 @@ private fun MainActivity.buildCall() {
         val engine = tts
         if (engine == null) { then(); return }
         speaking.set(true)
+        barged = false
+        ttsSpoken = text.replace(Regex("[*#`_]+"), "").replace(Regex("\\s+"), " ").trim().lowercase()
         waveEnergy(0.85f)
-        setStatus("talking")
+        setStatus("talking — cut in anytime")
         setCaption(text)
         val clean = text.replace(Regex("[*#`_]+"), "").replace(Regex("\\s+"), " ").trim()
         val id = "orubus-call-${System.currentTimeMillis()}"
@@ -169,18 +177,24 @@ private fun MainActivity.buildCall() {
             override fun onDone(utteranceId: String?) {
                 if (utteranceId == id) {
                     speaking.set(false)
-                    runOnUiThread { then() }
+                    if (!barged) runOnUiThread { then() }
                 }
             }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 if (utteranceId == id) {
                     speaking.set(false)
-                    runOnUiThread { then() }
+                    if (!barged) runOnUiThread { then() }
                 }
             }
         })
         engine.speak(clean.take(900), TextToSpeech.QUEUE_FLUSH, Bundle(), id)
+        // the mic comes back up WHILE the answer is still playing — that's
+        // what makes it a phone call and not a walkie-talkie: talk over me
+        // and I yield mid-sentence
+        main.postDelayed({
+            if (!ended.get() && speaking.get()) listenAgain(quiet = true)
+        }, 1500)
     }
 
     // ---- one spoken turn through the SAME ladder as typing ----
@@ -231,7 +245,24 @@ private fun MainActivity.buildCall() {
         }
         override fun onPartialResults(partialResults: Bundle?) {
             val part = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (!part.isNullOrBlank() && !speaking.get()) setCaption(part)
+            if (part.isNullOrBlank() || ended.get()) return
+            if (speaking.get()) {
+                // BARGE-IN — the human talks over the answer, the answer yields.
+                // Echo guard: if the partial is just the phone hearing ITSELF
+                // (a slice of the words being spoken), it's not a person.
+                val p = part.trim().lowercase()
+                val heardSelf = ttsSpoken.contains(p) || ttsSpoken.startsWith(p)
+                if (p.split(" ").size >= 2 && !heardSelf) {
+                    barged = true
+                    speaking.set(false)
+                    try { tts?.stop() } catch (_: Exception) {}
+                    setCaption("cutting in — I'm listening")
+                    setStatus("listening — just talk")
+                    waveEnergy(0.62f)
+                }
+                return
+            }
+            setCaption(part)
         }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     })

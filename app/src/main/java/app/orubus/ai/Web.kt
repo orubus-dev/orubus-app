@@ -162,7 +162,7 @@ object W {
         addView(IconView(c, icon, theme.ink), FrameLayout.LayoutParams(dp(c, 19), dp(c, 19), Gravity.CENTER))
     }
 
-    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND, WAVE, IMAGE, DOTS }
+    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND, WAVE, IMAGE, DOTS, RESEND }
 
     /** Hand-drawn icon — 2.1dp rounded ink strokes, centered, never squeezed. */
     class IconView(c: Context, private val icon: Icon, inkColor: Int) : View(c) {
@@ -254,6 +254,18 @@ object W {
                 Icon.DOTS -> {
                     // the "more" mark — three dots, vertical
                     for (i in -1..1) canvas.drawCircle(cx, cy + i * s * 0.22f, s * 0.06f, fill)
+                }
+                Icon.RESEND -> {
+                    // ↻ — an open arc with an arrowhead; the resend mark on a
+                    // network-failed bubble
+                    val r = s * 0.30f
+                    val rect = android.graphics.RectF(cx - r, cy - r, cx + r, cy + r)
+                    canvas.drawArc(rect, -70f, 290f, false, stroke)
+                    // arrowhead at the arc's end (top-right, pointing outward)
+                    val ax = cx + r * Math.cos(Math.toRadians(-70f + 290f)).toFloat()
+                    val ay = cy + r * Math.sin(Math.toRadians(-70f + 290f)).toFloat()
+                    canvas.drawLine(ax, ay, ax - s * 0.16f, ay - s * 0.05f, stroke)
+                    canvas.drawLine(ax, ay, ax + s * 0.02f, ay - s * 0.17f, stroke)
                 }
             }
         }

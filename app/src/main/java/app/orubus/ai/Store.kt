@@ -24,10 +24,31 @@ object Store {
     fun prefs() = AppCtx.get().getSharedPreferences("orubus", android.content.Context.MODE_PRIVATE)
 
     // ---------- chats ----------
-    data class Msg(val mine: Boolean, val text: String, val at: Long, val system: Boolean = false, val think: String = "")
+    data class Msg(val mine: Boolean, val text: String, val at: Long, val system: Boolean = false, val think: String = "", val img: String = "")
     data class Chat(val id: String, var name: String, val created: Long, val msgs: MutableList<Msg>)
 
     @Volatile private var cache: MutableList<Chat>? = null
+
+    private fun imgDir(): File = File(AppCtx.get().filesDir, "images").apply { mkdirs() }
+
+    /**
+     * A picked photo lands on disk (already downscaled ≤1024px JPEG) and the
+     * message carries only the file NAME — the bubble renders the real image
+     * from here, tap it for the full-screen viewer. Nothing is uploaded
+     * except the turn itself.
+     */
+    fun saveImage(bitmap: android.graphics.Bitmap): String {
+        val name = "img-${System.currentTimeMillis()}.jpg"
+        return try {
+            java.io.FileOutputStream(File(imgDir(), name)).use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, it) }
+            name
+        } catch (_: Exception) { "" }
+    }
+
+    fun loadImage(name: String): android.graphics.Bitmap? = try {
+        if (name.isBlank()) null
+        else android.graphics.BitmapFactory.decodeFile(File(imgDir(), name).absolutePath)
+    } catch (_: Exception) { null }
 
     @Synchronized
     fun chats(): MutableList<Chat> {
@@ -43,7 +64,7 @@ object Store {
                     val ma = o.optJSONArray("msgs") ?: JSONArray()
                     for (k in 0 until ma.length()) {
                         val m = ma.getJSONObject(k)
-                        msgs.add(Msg(m.optBoolean("mine"), m.optString("text", ""), m.optLong("at"), m.optBoolean("system"), m.optString("think", "")))
+                        msgs.add(Msg(m.optBoolean("mine"), m.optString("text", ""), m.optLong("at"), m.optBoolean("system"), m.optString("think", ""), m.optString("img", "")))
                     }
                     list.add(Chat(o.optString("id", UUID()), o.optString("name", "New chat"), o.optLong("created"), msgs))
                 }
@@ -66,7 +87,7 @@ object Store {
                 o.put("created", c.created)
                 val ma = JSONArray()
                 for (m in c.msgs.takeLast(200)) {
-                    ma.put(JSONObject().put("mine", m.mine).put("text", m.text).put("at", m.at).put("system", m.system).put("think", m.think))
+                    ma.put(JSONObject().put("mine", m.mine).put("text", m.text).put("at", m.at).put("system", m.system).put("think", m.think).put("img", m.img))
                 }
                 o.put("msgs", ma)
                 arr.put(o)
@@ -201,18 +222,20 @@ object Store {
         save()
     }
 
-    fun append(chat: Chat, mine: Boolean, text: String, system: Boolean = false, think: String = ""): Msg {
-        val m = Msg(mine, text, System.currentTimeMillis(), system, think)
+    fun append(chat: Chat, mine: Boolean, text: String, system: Boolean = false, think: String = "", img: String = ""): Msg {
+        val m = Msg(mine, text, System.currentTimeMillis(), system, think, img)
         chat.msgs.add(m)
         // auto-name a fresh chat from its first user message
-        if (chat.name == "New chat" && mine && !system) chat.name = text.take(24)
+        if (chat.name == "New chat" && mine && !system && text.isNotBlank()) chat.name = text.take(24)
         save()
         return m
     }
 
-    /** The visible turns of a chat (no system lines) for the engine context. */
+    /** The visible turns of a chat (no system lines) for the engine context.
+     *  A photo-only message still needs words for the lane's history — the
+     *  pixels themselves ride the last user turn as the image part. */
     fun turnsOf(chat: Chat): List<Pair<Boolean, String>> =
-        chat.msgs.filter { !it.system }.map { it.mine to it.text }
+        chat.msgs.filter { !it.system }.map { it.mine to (if (it.text.isBlank() && it.img.isNotBlank()) "(sent a photo — see the attached image)" else it.text) }
 
     fun UUID(): String = java.util.UUID.randomUUID().toString().take(8)
 }

@@ -643,12 +643,18 @@ internal fun MainActivity.toggleSheet(open: Boolean) {
 }
 
 // ---------- AdMob ----------
+//
+// Money rule: this binary contains NO ad unit ids. The manifest carries the
+// AdMob APPLICATION id; the unit ids arrive from our own backend (api/chat
+// action 'adconfig') at the moment an ad is about to load, served only to a
+// build signed with our key (x-orubus-sig attestation). Swap/rotate/pause a
+// unit = a server change, zero app releases, and a modded build has nothing
+// ad-shaped to strip.
 
 internal fun MainActivity.admobCfg(): JSONObject? =
     stateJson?.optJSONObject("app")?.optJSONObject("admob")?.takeIf { it.optBoolean("enabled", false) }
 
 internal fun MainActivity.initAdsIfNeeded() {
-    if (admobCfg() == null) return
     if (adsReady) return
     adsReady = true
     try {
@@ -676,49 +682,94 @@ internal fun MainActivity.renderBanner(forShop: Boolean) {
     }
 }
 
+/** The rewarded ad — config fetched FRESH at load time from our server. */
 internal fun MainActivity.watchAd() {
-    val cfg = admobCfg()
-    if (cfg == null) {
-        Toast.makeText(this, "ads aren't on right now", Toast.LENGTH_SHORT).show()
-        return
-    }
     if (!adsReady) initAdsIfNeeded()
-    val nonce = Api.adToken()
-    if (nonce.isNullOrBlank()) {
-        Toast.makeText(this, "couldn't start an ad — try again in a moment", Toast.LENGTH_SHORT).show()
-        return
-    }
-    val reward = cfg.optInt("reward", 50)
     Toast.makeText(this, "loading the ad…", Toast.LENGTH_SHORT).show()
-    try {
-        com.google.android.gms.ads.rewarded.RewardedAd.load(this, cfg.optString("rewardedId", ""),
-            com.google.android.gms.ads.AdRequest.Builder().build(),
-            object : com.google.android.gms.ads.rewarded.RewardedAdLoadCallback() {
-                override fun onAdFailedToLoad(error: com.google.android.gms.ads.LoadAdError) {
-                    runOnUiThread { Toast.makeText(this@watchAd, "no ad filled — try again later", Toast.LENGTH_SHORT).show() }
-                }
-                override fun onAdLoaded(ad: com.google.android.gms.ads.rewarded.RewardedAd) {
-                    ad.fullScreenContentCallback = object : com.google.android.gms.ads.FullScreenContentCallback() {
-                        override fun onAdDismissedFullScreenContent() { /* next ad loads fresh */ }
-                    }
-                    runOnUiThread {
-                        ad.show(this@watchAd) { item ->
-                            Thread {
-                                val r = Api.adClaim(nonce)
-                                runOnUiThread {
-                                    if (r?.optBoolean("ok", false) == true) {
-                                        Toast.makeText(this@watchAd, "+${r.optInt("gained", reward)} SU — straight to your wallet", Toast.LENGTH_LONG).show()
-                                        r.optJSONObject("wallet")?.let { renderWallet(it) }
-                                    } else {
-                                        Toast.makeText(this@watchAd, r?.optString("error", "reward didn't land") ?: "reward didn't land", Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                            }.start()
+    Thread {
+        val cfg = try { Api.adConfig() } catch (_: Exception) { null }
+        runOnUiThread {
+            if (cfg == null) {
+                Toast.makeText(this, "ads aren't on right now", Toast.LENGTH_SHORT).show()
+                return@runOnUiThread
+            }
+            val nonce = Api.adToken()
+            if (nonce.isNullOrBlank()) {
+                Toast.makeText(this, "couldn't start an ad — try again in a moment", Toast.LENGTH_SHORT).show()
+                return@runOnUiThread
+            }
+            val reward = cfg.optInt("reward", 50)
+            val unitId = cfg.optString("rewarded", cfg.optString("rewardedId", ""))
+            try {
+                com.google.android.gms.ads.rewarded.RewardedAd.load(this, unitId,
+                    com.google.android.gms.ads.AdRequest.Builder().build(),
+                    object : com.google.android.gms.ads.rewarded.RewardedAdLoadCallback() {
+                        override fun onAdFailedToLoad(error: com.google.android.gms.ads.LoadAdError) {
+                            runOnUiThread { Toast.makeText(this@watchAd, "no ad filled — try again later", Toast.LENGTH_SHORT).show() }
                         }
-                    }
-                }
-            })
-    } catch (e: Exception) {
-        Toast.makeText(this, "ads aren't ready — try again in a bit", Toast.LENGTH_SHORT).show()
-    }
+                        override fun onAdLoaded(ad: com.google.android.gms.ads.rewarded.RewardedAd) {
+                            ad.fullScreenContentCallback = object : com.google.android.gms.ads.FullScreenContentCallback() {
+                                override fun onAdDismissedFullScreenContent() { /* next ad loads fresh */ }
+                            }
+                            runOnUiThread {
+                                ad.show(this@watchAd) { item ->
+                                    Thread {
+                                        val r = Api.adClaim(nonce)
+                                        runOnUiThread {
+                                            if (r?.optBoolean("ok", false) == true) {
+                                                Toast.makeText(this@watchAd, "+${r.optInt("gained", reward)} SU — straight to your wallet", Toast.LENGTH_LONG).show()
+                                                r.optJSONObject("wallet")?.let { renderWallet(it) }
+                                            } else {
+                                                Toast.makeText(this@watchAd, r?.optString("error", "reward didn't land") ?: "reward didn't land", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    }.start()
+                                }
+                            }
+                        }
+                    })
+            } catch (e: Exception) {
+                Toast.makeText(this, "ads aren't ready — try again in a bit", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }.start()
+}
+
+/**
+ * The App Open ad — a real one: shows when the app comes back from the
+ * background, capped hard by the server (appOpenGapMin, default 4h) and by
+ * a local floor so a flapping ad never bullies the chat. Never fires while
+ * a call is live or a send is in flight.
+ */
+internal fun MainActivity.maybeAppOpenAd() {
+    if (!built || calling || sending) return
+    if (Api.cookieValue.isBlank()) return
+    Thread {
+        val cfg = try { Api.adConfig() } catch (_: Exception) { null } ?: return@Thread
+        val gapMin = cfg.optInt("appOpenGapMin", 4).coerceAtLeast(1)
+        val last = Store.prefs().getLong("appopen_at", 0L)
+        if (System.currentTimeMillis() - last < gapMin * 60_000L) return@Thread
+        if (calling || sending) return@Thread
+        if (!adsReady) runOnUiThread { initAdsIfNeeded() }
+        val unitId = cfg.optString("appOpen", "")
+        if (unitId.isBlank()) return@Thread
+        runOnUiThread {
+            try {
+                com.google.android.gms.ads.appopen.AppOpenAd.load(this, unitId,
+                    com.google.android.gms.ads.AdRequest.Builder().build(),
+                    object : com.google.android.gms.ads.appopen.AppOpenAd.AppOpenAdLoadCallback() {
+                        override fun onAdFailedToLoad(error: com.google.android.gms.ads.LoadAdError) { /* silent — it's an opener, not a job */ }
+                        override fun onAdLoaded(ad: com.google.android.gms.ads.appopen.AppOpenAd) {
+                            if (calling || sending) return
+                            ad.fullScreenContentCallback = object : com.google.android.gms.ads.FullScreenContentCallback() {
+                                override fun onAdDismissedFullScreenContent() { /* fresh load next time */ }
+                                override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.FullScreenContentError) {}
+                            }
+                            Store.prefs().edit().putLong("appopen_at", System.currentTimeMillis()).apply()
+                            try { ad.show(this@maybeAppOpenAd) } catch (_: Exception) {}
+                        }
+                    })
+            } catch (_: Exception) { /* ads never get in the chat's way */ }
+        }
+    }.start()
 }

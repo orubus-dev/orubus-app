@@ -17,13 +17,12 @@
         android:allowBackup="true"
         android:supportsRtl="true">
 
-        <!-- AdMob application id. Ships with Google's public TEST id so the
-             integration works out of the box; when the real AdMob account is
-             wired, swap this id AND set the unit ids in Mission Control
-             (values → AdMob rows), no other code changes. -->
+        <!-- AdMob application id — the real Orubus AdMob app. The UNIT ids stay
+             server-side: the app fetches them from our backend at load time
+             (signed-build attestation), so nothing ad-shaped lives in the APK. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-6399329891118246~2593948632" />
 
         <activity
             android:name=".MainActivity"

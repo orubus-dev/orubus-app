@@ -19,6 +19,28 @@ object Api {
     /** "v2.<uid>.<sid>.<exp>.<iat>.<hmac>" — set after a successful link. */
     @Volatile var cookieValue: String = ""
 
+    /**
+     * This build's own signing-certificate digest (SHA-256, hex). Every
+     * request rides it as the `x-orubus-sig` header — the server answers
+     * ad-config / ad-reward only to a build signed with OUR key, so a
+     * re-signed mod gets nothing ad-shaped to work with.
+     */
+    val sigHash: String by lazy {
+        runCatching {
+            val app = AppCtx.get()
+            val sigs = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                app.packageManager.getPackageInfo(app.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+                    .signingInfo?.apkContentsSigners
+            } else {
+                @Suppress("DEPRECATION")
+                app.packageManager.getPackageInfo(app.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures
+            }
+            val bytes = sigs?.firstOrNull()?.toByteArray() ?: return@runCatching ""
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            md.digest(bytes).joinToString("") { "%02x".format(it) }
+        }.getOrDefault("")
+    }
+
     private fun connect(url: String, method: String): HttpURLConnection {
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = method
@@ -27,6 +49,7 @@ object Api {
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         c.setRequestProperty("Accept", "application/json")
         if (cookieValue.isNotBlank()) c.setRequestProperty("Cookie", "orubus_web=$cookieValue")
+        if (sigHash.isNotBlank()) c.setRequestProperty("X-Orubus-Sig", sigHash)
         return c
     }
 
@@ -186,6 +209,17 @@ object Api {
     fun adToken(): String? = try {
         val r = post("adtoken")
         if (r.optBoolean("ok", false)) r.optString("nonce") else null
+    } catch (_: Exception) { null }
+
+    /**
+     * adconfig — the ad unit ids, fetched FRESH the moment an ad is about to
+     * load. Nothing ad-shaped is baked into this binary: the ids live on the
+     * server (env → admin values → test defaults), served only to the signed
+     * build. Held in memory for ttlSec, never persisted.
+     */
+    fun adConfig(): JSONObject? = try {
+        val r = post("adconfig")
+        if (r.optBoolean("ok", false) && r.optBoolean("enabled", false)) r else null
     } catch (_: Exception) { null }
 
     /** ad: claim the reward (provider=admob — Google's SDK callback on-device). */

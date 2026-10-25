@@ -1,6 +1,10 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    // Firebase config (google-services.json) — AdMob, Analytics (DAU/WAU/MAU
+    // also stream to Orubus's own console), crash reporting. No legacy
+    // service-account keys anywhere: the JSON config is all this needs.
+    id 'com.google.gms.google-services'
 }
 
 android {
@@ -55,7 +59,15 @@ android {
 }
 
 dependencies {
-    // AdMob — rewarded SU + the shop banner (v2 monetization).
+    // AdMob — the app-open + rewarded SU ads. Unit ids are NEVER baked in:
+    // they arrive from our own server at load time (api/chat action 'adconfig',
+    // signed-build attestation), so swapping/rotating units is a server change,
+    // and a modded binary has no ids to strip.
+    // Firebase BoM — Analytics (the user's console gets native DAU/etc too).
+    // 33.7.0 = the newest line that stays on compileSdk 34 (this build's AGP);
+    // bump together with the Android Gradle Plugin, never ahead of it.
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-analytics'
     // OkHttp — the request engine's HTTP lane: one pooled client, one steady
     // pinned IP for every duck.ai call (Dns pinning), HTTP/2 keep-alive.
     implementation 'com.google.android.gms:play-services-ads:23.6.0'
