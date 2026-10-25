@@ -368,7 +368,7 @@ class MainActivity : Activity() {
         val tiers = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for ((t, label) in listOf("lite" to "QUICK", "standard" to "CHAT", "pro" to "DEEP")) {
             val chip = W.pill(this, label, t == tier)
-            chip.setOnClickListener { setTier(t) }
+            chip.setOnClickListener { selectTier(t) }
             chip.tag = t
             pills.add(chip)
             tiers.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(7) })
@@ -411,7 +411,7 @@ class MainActivity : Activity() {
         })
     }
 
-    internal fun setTier(t: String) {
+    internal fun selectTier(t: String) {
         tier = t
         for (c in pills) {
             val sel = c.tag == t
