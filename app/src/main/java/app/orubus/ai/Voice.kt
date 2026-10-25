@@ -10,6 +10,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -61,6 +62,9 @@ internal fun MainActivity.onMicPermission(granted: Boolean) {
     if (granted) startVoiceCall()
     else pushSys("no mic, no call — but the keyboard still talks to me fine")
 }
+
+/** The permission round-trip lands here from onRequestPermissionsResult. */
+internal fun MainActivity.handleMicResult(granted: Boolean) = onMicPermission(granted)
 
 @SuppressLint("MissingPermission")
 private fun MainActivity.buildCall() {

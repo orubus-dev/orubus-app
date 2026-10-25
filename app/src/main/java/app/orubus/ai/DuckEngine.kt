@@ -137,11 +137,14 @@ object DuckEngine {
     class NetworkDeadException(message: String) : Exception(message)
 
     /** Cheap connectivity probe (best effort — true when unknowable). */
-    fun netUp(): Boolean = try {
-        val cm = AppCtx.get().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val n = cm.activeNetwork ?: return false
-        cm.getNetworkCapabilities(n)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
-    } catch (_: Exception) { true }
+    fun netUp(): Boolean {
+        return try {
+            val cm = AppCtx.get().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val n = cm.activeNetwork
+            if (n == null) false
+            else cm.getNetworkCapabilities(n)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
+        } catch (_: Exception) { true }
+    }
 
     // ---------- the token: alive till it runs out ----------
 
