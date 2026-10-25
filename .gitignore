@@ -1,0 +1,13 @@
+# build outputs
+build/
+app/build/
+.gradle/
+local.properties
+*.jks
+!docs/*.jks
+*.keystore
+.idea/
+*.iml
+.DS_Store
+captures/
+.cxx/

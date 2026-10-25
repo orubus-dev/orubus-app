@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Orubus AI</string>
+    <string name="legal_title">Before you come in</string>
+    <string name="token_hint">GENJ-XXXX</string>
+</resources>

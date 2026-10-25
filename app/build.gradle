@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'app.orubus.ai'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.orubus.ai'
+        minSdk 24
+        targetSdk 34
+        versionCode rootProject.ext.appVersionCode
+        versionName rootProject.ext.appVersionName
+    }
+
+    signingConfigs {
+        release {
+            // CI injects these via env (GitHub Actions secrets). Missing env
+            // = unsigned local build — assembleRelease still succeeds.
+            def ksPath = System.getenv('ORUBUS_KEYSTORE')
+            if (ksPath != null && !ksPath.isBlank()) {
+                storeFile file(ksPath)
+                storePassword System.getenv('ORUBUS_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ORUBUS_KEY_ALIAS')
+                keyPassword System.getenv('ORUBUS_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (System.getenv('ORUBUS_KEYSTORE') != null && !System.getenv('ORUBUS_KEYSTORE').isBlank()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+
+    applicationVariants.all { variant ->
+        if (variant.buildType.name == 'release') {
+            variant.outputs.all { output ->
+                outputFileName = 'Orubus.apk' // stable name → stable "latest" download URL
+            }
+        }
+    }
+}
+
+dependencies {
+    // intentionally empty — zero external dependencies: framework APIs only
+    // (smaller APK, nothing to resolve, nothing to break).
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="yolk">#FFD84A</color>
+    <color name="yolk_deep">#F0B429</color>
+    <color name="ink">#0F0F0F</color>
+    <color name="paper">#171717</color>
+    <color name="card2">#1F1F1F</color>
+    <color name="line">#2E2E2E</color>
+    <color name="txt">#F6F6F6</color>
+    <color name="dim">#9A9A9A</color>
+    <color name="launcher_bg">#FFD84A</color>
+</resources>
