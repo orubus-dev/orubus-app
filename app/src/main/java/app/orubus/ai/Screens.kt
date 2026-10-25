@@ -699,12 +699,12 @@ internal fun MainActivity.watchAd() {
             try { Thread.sleep(900) } catch (_: InterruptedException) {}
             start = Api.adStart()
         }
-        if (start.nonce == null) {
+        val nonce = start.nonce
+        if (nonce == null) {
             val why = start.error ?: "couldn't start an ad — try again in a moment"
             runOnUiThread { Toast.makeText(this, why, Toast.LENGTH_LONG).show() }
             return@Thread
         }
-        val nonce = start.nonce
         val reward = cfg.optInt("reward", 20)
         val unitId = cfg.optString("rewarded", cfg.optString("rewardedId", ""))
         runOnUiThread {
