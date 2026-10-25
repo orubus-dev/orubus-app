@@ -138,7 +138,7 @@ class MainActivity : Activity() {
             setTextColor(C(0xFF9A9A9A))
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, dp(20))
-            setLineSpacing(dp(3), 1f)
+            setLineSpacing(dp(3).toFloat(), 1f)
         }
         val input = EditText(this).apply {
             hint = "GENJ-XXXX"
