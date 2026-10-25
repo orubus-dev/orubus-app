@@ -131,7 +131,7 @@ class MainActivity : Activity() {
 
     @SuppressLint("SetTextI18n")
     private fun showTokenScreen() {
-        val pad = G.dp(this, 24)
+        val pad = G.dp(this@MainActivity, 24)
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -197,7 +197,7 @@ class MainActivity : Activity() {
 
         box.addView(glass); box.addView(title); box.addView(sub)
         box.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        box.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 14) })
+        box.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 14) })
         box.addView(status); box.addView(later)
         chatColumn.addView(box, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
@@ -259,17 +259,17 @@ class MainActivity : Activity() {
         inboxDot = View(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(G.PINK) }
         }
-        inbox.addView(inboxDot, FrameLayout.LayoutParams(G.dp(this@MainActivity, 9), G.dp(this@MainActivity, 9), Gravity.TOP or Gravity.END).apply { topMargin = G.dp(this, 2); marginEnd = G.dp(this, 2) })
+        inbox.addView(inboxDot, FrameLayout.LayoutParams(G.dp(this@MainActivity, 9), G.dp(this@MainActivity, 9), Gravity.TOP or Gravity.END).apply { topMargin = G.dp(this@MainActivity, 2); marginEnd = G.dp(this@MainActivity, 2) })
         inboxDot?.visibility = View.GONE
-        bar.addView(inbox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this, 8) })
+        bar.addView(inbox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this@MainActivity, 8) })
 
         val gear = glassBtn("⚙")
         gear.setOnClickListener { toggleSettings(true) }
-        bar.addView(gear, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this, 8) })
+        bar.addView(gear, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this@MainActivity, 8) })
 
         chatColumn.addView(bar)
         // specular strip under the bar
-        chatColumn.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)))
+        chatColumn.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this@MainActivity, 2)))
     }
 
     private fun buildChatArea() {
@@ -294,7 +294,7 @@ class MainActivity : Activity() {
             chip.setOnClickListener { setTier(t) }
             chip.tag = t
             modeChips.add(chip)
-            modeRow!!.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this, 4); marginEnd = G.dp(this, 4) })
+            modeRow!!.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = G.dp(this@MainActivity, 4); marginEnd = G.dp(this@MainActivity, 4) })
         }
         chatColumn.addView(modeRow)
     }
@@ -305,7 +305,7 @@ class MainActivity : Activity() {
             val sel = c.tag == t
             c.setTextColor(if (sel) G.INK else G.MUTED)
             c.background = if (sel) {
-                GradientDrawable().apply { setColor(Color.argb(230, 255, 215, 94)); cornerRadius = G.dp(this, 12).toFloat() }
+                GradientDrawable().apply { setColor(Color.argb(230, 255, 215, 94)); cornerRadius = G.dp(this@MainActivity, 12).toFloat() }
             } else G.glass(this, 12, fillAlpha = 20)
         }
     }
@@ -557,7 +557,7 @@ class MainActivity : Activity() {
             text = "CHATS"; textSize = 17f; typeface = G.black(this@MainActivity); setTextColor(G.CREAM)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val plus = G.brutal(this, "＋ NEW", bgColor = G.PINK, fgColor = G.INK, radiusDp = 10)
-        plus.setPadding(G.dp(this, 12), G.dp(this, 7), G.dp(this, 12), G.dp(this, 7))
+        plus.setPadding(G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 7), G.dp(this@MainActivity, 12), G.dp(this@MainActivity, 7))
         plus.setOnClickListener {
             toggleDrawer(false)
             val c = Store.newChat()
@@ -567,7 +567,7 @@ class MainActivity : Activity() {
         }
         head.addView(plus)
         panel.addView(head)
-        panel.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)).apply { topMargin = G.dp(this, 8); bottomMargin = G.dp(this, 8) })
+        panel.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this@MainActivity, 2)).apply { topMargin = G.dp(this@MainActivity, 8); bottomMargin = G.dp(this@MainActivity, 8) })
 
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
         chatsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -610,7 +610,7 @@ class MainActivity : Activity() {
         }
         meterHolder.addView(footMeterFill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         footMeter = meterHolder
-        foot.addView(meterHolder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 10)).apply { topMargin = G.dp(this, 8) })
+        foot.addView(meterHolder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this@MainActivity, 10)).apply { topMargin = G.dp(this@MainActivity, 8) })
 
         footBal = TextView(this).apply {
             text = "— / — SU"; textSize = 12f; setTextColor(G.MUTED); setPadding(0, G.dp(this@MainActivity, 3), 0, 0)
@@ -618,11 +618,11 @@ class MainActivity : Activity() {
         foot.addView(footBal)
 
         adButton = G.brutal(this, "📺 WATCH AD · +SU", bgColor = G.VIOLET, fgColor = G.CREAM, radiusDp = 12)
-        adButton?.setPadding(G.dp(this, 14), G.dp(this, 9), G.dp(this, 14), G.dp(this, 9))
+        adButton?.setPadding(G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 9), G.dp(this@MainActivity, 14), G.dp(this@MainActivity, 9))
         adButton?.setOnClickListener { watchAd() }
-        foot.addView(adButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 10) })
+        foot.addView(adButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 10) })
 
-        panel.addView(foot, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 10) })
+        panel.addView(foot, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 10) })
 
         root.addView(panel, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.START })
         panel.translationX = -w.toFloat()
@@ -661,7 +661,7 @@ class MainActivity : Activity() {
                     .setNegativeButton("Keep", null).show()
                 true
             }
-            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
         }
     }
 
@@ -730,14 +730,14 @@ class MainActivity : Activity() {
             }
             return t
         }
-        panel.addView(row("🛍 SHOP — packs · pro · themes", "shop"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
-        panel.addView(row("🗳 REQUESTS — the feature wall", "requests"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
-        panel.addView(row("📥 INBOX — from the admin", "inbox"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
-        panel.addView(row("⚖ LEGAL", "legal"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
-        panel.addView(row("ℹ ABOUT", "about"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row("🛍 SHOP — packs · pro · themes", "shop"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
+        panel.addView(row("🗳 REQUESTS — the feature wall", "requests"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
+        panel.addView(row("📥 INBOX — from the admin", "inbox"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
+        panel.addView(row("⚖ LEGAL", "legal"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
+        panel.addView(row("ℹ ABOUT", "about"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
         val ver = "APP VERSION · v${versionName()}"
-        panel.addView(row(ver, "version"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
-        panel.addView(row("🪪 IDENTITY — link / log out", "identity"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 6) })
+        panel.addView(row(ver, "version"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
+        panel.addView(row("🪪 IDENTITY — link / log out", "identity"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 6) })
 
         root.addView(panel, FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.END })
         panel.translationX = w.toFloat()
@@ -785,7 +785,7 @@ class MainActivity : Activity() {
             }.start()
         }
         strip.addView(input)
-        strip.addView(go, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 8) })
+        strip.addView(go, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 8) })
         chatColumn.addView(strip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
@@ -808,7 +808,7 @@ class MainActivity : Activity() {
             setOnClickListener { inboxScreen?.visibility = View.GONE }
         })
         screen.addView(head)
-        screen.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)).apply { topMargin = G.dp(this, 8); bottomMargin = G.dp(this, 10) })
+        screen.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this@MainActivity, 2)).apply { topMargin = G.dp(this@MainActivity, 8); bottomMargin = G.dp(this@MainActivity, 10) })
         val scroll = ScrollView(this)
         inboxList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(inboxList)
@@ -840,7 +840,7 @@ class MainActivity : Activity() {
             if (unread) {
                 card.addView(View(this).apply {
                     background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(G.PINK) }
-                }, LinearLayout.LayoutParams(G.dp(this, 8), G.dp(this, 8)).apply { bottomMargin = G.dp(this, 5) })
+                }, LinearLayout.LayoutParams(G.dp(this@MainActivity, 8), G.dp(this@MainActivity, 8)).apply { bottomMargin = G.dp(this@MainActivity, 5) })
             }
             card.addView(TextView(this).apply {
                 text = o.optString("text", ""); textSize = 13.5f; setTextColor(G.CREAM)
@@ -850,7 +850,7 @@ class MainActivity : Activity() {
                 text = "from the admin · ${timeAgo(o.optLong("ts", 0))}"; textSize = 10.5f; setTextColor(G.MUTED)
                 setPadding(0, G.dp(this@MainActivity, 5), 0, 0)
             })
-            list.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this, 8) })
+            list.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = G.dp(this@MainActivity, 8) })
         }
         Store.prefs().edit().putLong("annSeen", System.currentTimeMillis()).apply()
         inboxDot?.visibility = View.GONE
@@ -880,7 +880,7 @@ class MainActivity : Activity() {
             setOnClickListener { webFrame?.visibility = View.GONE }
         })
         frame.addView(head)
-        frame.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this, 2)))
+        frame.addView(G.specular(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, G.dp(this@MainActivity, 2)))
 
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -948,7 +948,10 @@ class MainActivity : Activity() {
         if (!forShop || cfg == null || !adsReady) { slot.visibility = View.GONE; return }
         try {
             val ad = com.google.android.gms.ads.AdView(this)
-            ad.adUnitId = cfg.optString("bannerId", "")
+            // some SDK bindings expose adUnitId getter-only — reflect the setter
+            // (present at bytecode level) and hide the banner if it ever vanishes
+            val m = com.google.android.gms.ads.AdView::class.java.getMethod("setAdUnitId", String::class.java)
+            m.invoke(ad, cfg.optString("bannerId", ""))
             ad.adSize = com.google.android.gms.ads.AdSize.BANNER
             ad.loadAd(com.google.android.gms.ads.AdRequest.Builder().build())
             slot.addView(ad)

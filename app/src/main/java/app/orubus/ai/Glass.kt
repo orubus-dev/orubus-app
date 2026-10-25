@@ -73,7 +73,7 @@ object G {
                     intArrayOf(Color.TRANSPARENT, Color.argb(70, 255, 255, 255), Color.argb(20, 255, 158, 196), Color.TRANSPARENT),
                     floatArrayOf(0f, 0.35f, 0.65f, 1f), Shader.TileMode.CLAMP)
             }
-            canvas.drawRoundRect(RectF(dp2(14), 0f, width - dp2(14), dp2(1.6f)), dp2(1), dp2(1), p)
+            canvas.drawRoundRect(RectF(dp2(14f), 0f, width - dp2(14f), dp2(1.6f)), dp2(1f), dp2(1f), p)
         }
         private fun dp2(v: Float) = v * resources.displayMetrics.density
     }
@@ -90,8 +90,9 @@ object G {
             setPadding(dp(c, 20), dp(c, 12), dp(c, 20), dp(c, 12))
             val shadow = GradientDrawable().apply { setColor(0xFF000000); cornerRadius = dp(c, radiusDp).toFloat() }
             val face = GradientDrawable().apply { setColor(bgColor); cornerRadius = dp(c, radiusDp).toFloat() }
+            val inset = G.dp(c, 3)
             background = LayerDrawable(arrayOf(shadow, face)).apply {
-                setLayerInset(1, 0, 0, dp(c, 3), dp(c, 3)) // ink offset = the brutal drop
+                setLayerInset(1, 0, 0, inset, inset) // ink offset = the brutal drop
             }
         }
         return tv
@@ -127,7 +128,7 @@ object G {
  */
 class LiquidBackground(c: Context) : View(c) {
     private val orbs = listOf(
-        Orb(0xFFB35C8A.toInt(), 0.22f, 0.28f, 0.62f, 0.00021f, 0.0),
+        Orb(0xFFB35C8A.toInt(), 0.22f, 0.28f, 0.62f, 0.00021f, 0.0f),
         Orb(0xFFB89A3C.toInt(), 0.16f, 0.80f, 0.24f, 0.00017f, 2.1f),
         Orb(0xFF5C4A99.toInt(), 0.26f, 0.62f, 0.78f, 0.00013f, 4.2f),
         Orb(0xFF9E5368.toInt(), 0.14f, 0.12f, 0.72f, 0.00024f, 1.2f),
@@ -140,15 +141,15 @@ class LiquidBackground(c: Context) : View(c) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ink)
         val t = System.currentTimeMillis()
         for (o in orbs) {
-            val cx = (o.ax * width + Math.sin(t * o.speed + o.phase) * width * 0.14).toFloat()
-            val cy = (o.ay * height + Math.cos(t * o.speed * 0.8 + o.phase) * height * 0.10).toFloat()
+            val cx = (o.ax * width + Math.sin((t * o.speed + o.phase).toDouble()) * width * 0.14).toFloat()
+            val cy = (o.ay * height + Math.cos((t * o.speed * 0.8 + o.phase).toDouble()) * height * 0.10).toFloat()
             val rad = o.radiusF * Math.max(width, height)
             val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 shader = RadialGradient(cx, cy, rad, intArgb(150, o.color), intArgb(0, o.color), Shader.TileMode.CLAMP)
             }
             canvas.drawCircle(cx, cy, rad, p)
         }
-        postInvalidateOnAnimationDelayed(60)
+        postInvalidateDelayed(60)
     }
 
     private fun intArgb(a: Int, rgb: Int): Int = Color.argb(a, (rgb shr 16) and 0xFF, (rgb shr 8) and 0xFF, rgb and 0xFF)
