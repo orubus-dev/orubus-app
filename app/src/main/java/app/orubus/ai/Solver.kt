@@ -44,6 +44,11 @@ object Solver {
                 val wv = WebView(activity)
                 wv.settings.javaScriptEnabled = true
                 wv.settings.domStorageEnabled = false
+                // UA parity: the sandbox must believe it IS the same browser the
+                // HTTP lane claims to be (Chrome 131 / Windows) — any drift
+                // between the solved signals' identity and the device's real
+                // Android WebView UA reads as a 400 down the lane.
+                wv.settings.userAgentString = DuckEngine.UA
                 wv.setBackgroundColor(0x00000000)
                 wv.alpha = 0f
                 wv.visibility = android.view.View.GONE

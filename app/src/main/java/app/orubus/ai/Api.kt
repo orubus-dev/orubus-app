@@ -94,6 +94,29 @@ object Api {
         }
     }
 
+    // ---------- the feature wall (real votes, real comments) ----------
+
+    /** GET the wall — { ok, items:[…] } with the viewer's vote flags baked in. */
+    fun wallGet(): JSONObject {
+        val c = connect("$BASE/api/requests", "GET")
+        c.connectTimeout = 15_000
+        c.readTimeout = 20_000
+        return try { JSONObject(readBody(c)) } finally { c.disconnect() }
+    }
+
+    /** POST a wall action: create / vote / down / comment. */
+    fun wallAction(action: String, extra: Map<String, Any?> = emptyMap()): JSONObject {
+        val body = JSONObject(extra).put("action", action).toString()
+        val c = connect("$BASE/api/requests", "POST")
+        c.doOutput = true
+        try {
+            c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            return JSONObject(readBody(c))
+        } finally {
+            c.disconnect()
+        }
+    }
+
     // ---------- device-side duck billing (the SU wallet stays on Vercel) ----------
 
     /**

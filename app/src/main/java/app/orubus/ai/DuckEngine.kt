@@ -53,23 +53,27 @@ object DuckEngine {
         "accept-language" to "en-US",
     )
 
-    /** Derive the live front-end versions from the duck.ai homepage once per run. */
-    fun refreshFe() {
-        if (feFetched) return
-        feFetched = true
+    /** Derive the live front-end versions from the duck.ai homepage. Never
+     *  latches a failure — a stale fe-version reads as a 400 down the lane,
+     *  so a failed derivation retries on the next turn. */
+    fun refreshFe(force: Boolean = false) {
+        if (feFetched && !force) return
         try {
             val c = connect("https://duck.ai/", "GET")
             c.connectTimeout = 10_000
             c.readTimeout = 10_000
-            val body = readAll(c) ?: return
+            val body = readAll(c)
+            if (body.isNullOrBlank()) return // fallbacks stand; try again next turn
+            var ok = false
             val tag = Regex("data-version-tag=\"([^\"]+)\"").find(body)?.groupValues?.get(1)
             val sha = Regex("data-version-sha=\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-            if (!tag.isNullOrBlank() && !sha.isNullOrBlank()) feVersion = "$tag-$sha"
-            else if (!tag.isNullOrBlank()) feVersion = tag
+            if (!tag.isNullOrBlank() && !sha.isNullOrBlank()) { feVersion = "$tag-$sha"; ok = true }
+            else if (!tag.isNullOrBlank()) { feVersion = tag; ok = true }
             val e = Regex("entry\\.duckai\\.([a-z0-9]+)\\.js").find(body)?.groupValues?.get(1)
-            if (!e.isNullOrBlank()) entryVer = e
+            if (!e.isNullOrBlank()) { entryVer = e; ok = true }
+            if (ok) feFetched = true
         } catch (_: Exception) {
-            // fallbacks stand
+            // fallbacks stand; try again next turn
         }
     }
 
@@ -179,12 +183,14 @@ object DuckEngine {
 
     /**
      * One billed turn: status → solve → chat, retrying challenge-layer noise
-     * with a fresh challenge. Blocking; call from a worker thread.
+     * with a fresh challenge — exactly the server's duckChat retry ladder
+     * (any duck-4xx counts as challenge noise and gets one fresh roll).
+     * Blocking; call from a worker thread.
      */
     fun chat(messages: JSONArray, model: String, timeoutMs: Int = 45_000): String {
         refreshFe()
         var last: Exception? = null
-        for (attempt in 0 until 2) {
+        for (attempt in 0 until 3) {
             if (attempt > 0) Thread.sleep(2000 + (Math.random() * 2000).toLong())
             val journey = UUID.randomUUID().toString().replace("-", "")
             try {
@@ -195,7 +201,8 @@ object DuckEngine {
                 return chatOnce(journey, solved, model, messages, timeoutMs)
             } catch (e: DuckException) {
                 last = e
-                val retryable = e.status == 418 || e.message?.startsWith("no-challenge") == true ||
+                if (e.status in 400..599) feFetched = false // re-derive before the retry
+                val retryable = e.status == 418 || e.status in 400..499 || e.message?.startsWith("no-challenge") == true ||
                     e.message?.startsWith("solve") == true || e.message?.startsWith("bad-sig") == true ||
                     e.message == "duck-empty" || e.status == 0
                 if (!retryable) throw e
