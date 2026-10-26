@@ -79,7 +79,7 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // bzip2 decoder for the delta updater — Bspatch.kt streams the patch's
     // payload through it. Pure Java, zero transitive baggage.
-    implementation 'org.apache.commons:commons-compress:1.21.0'
+    implementation 'org.apache.commons:commons-compress:1.21'
     // WebRTC — the LIVE voice session (the native realtime call: mic up,
     // assistant audio down, transcript data channel). stream-webrtc-android
     // is Google's libwebrtc repacked for Maven Central.
