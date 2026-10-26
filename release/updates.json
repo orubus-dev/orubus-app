@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "latest": {
+    "code": 9,
+    "name": "3.7.1",
+    "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.1/Orubus.apk",
+    "sha256": "e2495bfeb91faea563c2ca97cdd24c067461731db5c23723b334c0ea616d4b8b",
+    "size": 18340346,
+    "components": [
+      "core app",
+      "the updater"
+    ],
+    "notes": "the updater: updates now install in-app as small delta patches; arm64-only build (much smaller)"
+  },
+  "deltas": {
+    "8": {
+      "to": 9,
+      "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.1/Orubus-8to9.bsdiff",
+      "sha256": "0339317b2ab1eb2001d7e22fdac47bbd9d70951edfff478d92a7b6d40eff82e5",
+      "size": 6154979,
+      "components": [
+        "core app",
+        "the updater"
+      ]
+    }
+  }
+}
