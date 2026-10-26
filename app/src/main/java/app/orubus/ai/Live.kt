@@ -78,7 +78,9 @@ object Live {
     }
 
     internal fun iceServers(t: DuckEngine.Token): List<PeerConnection.IceServer> {
-        val req = DuckEngine.laneRequest("https://duckduckgo.com/ice-servers")
+        // the voice lane rides the SAME /duckchat/v1 namespace as the chat
+        // lane — bare /ice-servers was a 404 on every call (v3.7.0/3.7.1 bug)
+        val req = DuckEngine.laneRequest("https://duckduckgo.com/duckchat/v1/ice-servers")
             .apply { liveHeaders(t).forEach { (k, v) -> header(k, v) } }
             .get()
             .build()
@@ -230,6 +232,10 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
             val f = Live.ensureFactory()
             val rtcConfig = PeerConnection.RTCConfiguration(Live.iceServers(token)).apply {
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+                // the reference mandates relay-only: TURN candidates keep the
+                // media path on the service's own infrastructure (field name in
+                // stream-webrtc 1.3.8 is iceTransportsType — 'Policy' never existed)
+                iceTransportsType = PeerConnection.IceTransportsType.RELAY
             }
             val dcOpen = CountDownLatch(1)
             val connected = CountDownLatch(1)
@@ -311,24 +317,50 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
             if (!offerDone.await(12, TimeUnit.SECONDS) || offerErr != null) throw Live.LiveException("the audio handshake failed${offerErr?.let { " — $it" } ?: ""}")
 
             val offerSdp = offerHolder[0] ?: throw Live.LiveException("the audio handshake never produced an offer")
-            val body = offerSdp.toRequestBody("application/sdp".toMediaType())
-            val req = DuckEngine.laneRequest("https://duckduckgo.com/session")
-                .apply { Live.liveHeaders(token).forEach { (k, v) -> header(k, v) } }
-                .post(body)
-                .build()
-            DuckEngine.laneClient().newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) throw Live.LiveException("the voice desk said ${resp.code}")
-                val answerSdp = resp.body?.string() ?: throw Live.LiveException("the voice desk came back empty")
-                val setDone = CountDownLatch(1)
-                var setErr: String? = null
-                pc.setRemoteDescription(object : SdpObserver {
-                    override fun onSetSuccess() { setDone.countDown() }
-                    override fun onCreateSuccess(p0: SessionDescription?) {}
-                    override fun onCreateFailure(p0: String?) {}
-                    override fun onSetFailure(p0: String?) { setErr = p0; setDone.countDown() }
-                }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
-                if (!setDone.await(10, TimeUnit.SECONDS) || setErr != null) throw Live.LiveException("the answer didn't take${setErr?.let { " — $it" } ?: ""}")
+            // the session POST, exactly like the reference client speaks it:
+            // raw SDP (application/sdp) first — the reference's own fallback
+            // shape; if the desk wants JSON now, retry {sdp, session:{voice}}
+            // (application/json) before giving up. Both paths carry the same
+            // chat-lane headers (x-vqd-hash-1 family).
+            val sessionUrl = "https://duckduckgo.com/duckchat/v1/session"
+            fun sessionPost(url: String, body: String, ctype: String): okhttp3.Response {
+                val req = DuckEngine.laneRequest(url)
+                    .apply { Live.liveHeaders(token).forEach { (k, v) -> header(k, v) } }
+                    .post(body.toRequestBody(ctype.toMediaType()))
+                    .build()
+                return DuckEngine.laneClient().newCall(req).execute()
             }
+            var answered = false
+            var answerSdp = ""
+            sessionPost(sessionUrl, offerSdp, "application/sdp").use { resp ->
+                if (resp.isSuccessful) {
+                    answered = true
+                    answerSdp = resp.body?.string() ?: throw Live.LiveException("the voice desk came back empty")
+                } else if (resp.code != 400 && resp.code != 422) {
+                    throw Live.LiveException("the voice desk said ${resp.code}")
+                }
+            }
+            if (!answered) {
+                sessionPost(sessionUrl, JSONObject().put("sdp", offerSdp).put("session", JSONObject().put("voice", JSONObject.NULL)).toString(), "application/json").use { resp ->
+                    if (!resp.isSuccessful) throw Live.LiveException("the voice desk said ${resp.code}")
+                    val text = resp.body?.string() ?: throw Live.LiveException("the voice desk came back empty")
+                    // the JSON answer may wrap the SDP — unwrap when it does
+                    answerSdp = try {
+                        val j = JSONObject(text)
+                        j.optString("sdp", "").ifBlank { text }
+                    } catch (_: Exception) { text }
+                }
+            }
+            if (answerSdp.isBlank()) throw Live.LiveException("the voice desk came back empty")
+            val setDone = CountDownLatch(1)
+            var setErr: String? = null
+            pc.setRemoteDescription(object : SdpObserver {
+                override fun onSetSuccess() { setDone.countDown() }
+                override fun onCreateSuccess(p0: SessionDescription?) {}
+                override fun onCreateFailure(p0: String?) {}
+                override fun onSetFailure(p0: String?) { setErr = p0; setDone.countDown() }
+            }, SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
+            if (!setDone.await(10, TimeUnit.SECONDS) || setErr != null) throw Live.LiveException("the answer didn't take${setErr?.let { " — $it" } ?: ""}")
 
             if (!connected.await(20, TimeUnit.SECONDS)) throw Live.LiveException("the lane never connected")
             if (!dcOpen.await(20, TimeUnit.SECONDS)) throw Live.LiveException("the transcript channel never opened")

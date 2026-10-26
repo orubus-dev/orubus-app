@@ -199,11 +199,25 @@ internal fun MainActivity.startImageGen(promptRaw: String) {
                 Store.append(chat, false, "🎨 $prompt", img = imgName)
             }
         } catch (e: Exception) {
-            failLine = e.message ?: "the paint lane slipped"
+            // human voice only — the raw lane words ("duck-400: …",
+            // "imggen:…", "no-challenge:429") never belong in a bubble
+            failLine = when {
+                Api.isNetErr(e) -> "no lane for the paint — nothing was spent, try again when you're back"
+                else -> {
+                    val raw = e.message ?: ""
+                    when {
+                        raw.contains("imggen:") -> "the painter slipped on that one — try rephrasing the prompt (nothing stays charged)"
+                        raw.contains("no-challenge") || raw.contains("duck-4") || raw.contains("duck-5") || raw.contains("duck-sse") ->
+                            "the paint lane is busy right now — give it a few seconds and try again"
+                        raw.contains("paint lane slipped") || raw.contains("units went straight back") -> raw // already human (server copy)
+                        else -> "the paint lane slipped — your units went straight back, try again in a moment"
+                    }
+                }
+            }
             if (token.isNotBlank()) Thread { Api.appFail(token) }.start()
             runOnUiThread {
                 removeView(row)
-                pushErr(if (Api.isNetErr(e)) "no lane for the paint — nothing was spent, try again when you're back" else failLine)
+                pushErr(failLine)
             }
         } finally {
             ImageGen.painting = false

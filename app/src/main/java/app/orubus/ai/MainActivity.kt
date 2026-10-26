@@ -1096,8 +1096,12 @@ class MainActivity : Activity() {
                 if (answer == null) {
                     // the hands — MCP connectors + the encrypted toolbox speak
                     // the same one-line tool contract; the loop is capped and
-                    // every hop narrates on the typing row
-                    if (linked && imgBase64 == null && (ToolRig.available() || Toolbox.list().isNotEmpty())) {
+                    // every hop narrates on the typing row. The gate opens for
+                    // EVERY linked text turn: the toolbox's built-in hands
+                    // (create_file/deploy_site…) exist even on a fresh install
+                    // — checking ToolRig.available() first (MCP-only) is what
+                    // sealed them off and made "deploy" do nothing in v3.7.0.
+                    if (linked && imgBase64 == null) {
                         try {
                             answer = ToolRig.toolLoop(chat, text, prelude, DuckEngine.modelFor(tier), { step ->
                                 runOnUiThread {
@@ -1317,14 +1321,17 @@ class MainActivity : Activity() {
             Intents.Kind.DOWNLOAD -> pushSys("you're holding it — this IS the app. share it: ${Api.APK_URL}")
             Intents.Kind.HELP -> pushSys("try: \"draw an image of …\" · \"browse https://…\" · \"build me a site and deploy it\" · \"open shop\" · \"new chat\" · \"how many credits\" · \"remember my name is …\" · or just talk — I'm all ears")
             Intents.Kind.LOGOUT -> confirmLogout()
-            Intents.Kind.IMAGE -> startImageGen(r.arg.ifBlank { "a small orange cat, sticker style" })
+            Intents.Kind.IMAGE -> if (r.arg.isBlank()) openImageGenSheet() else startImageGen(r.arg)
             Intents.Kind.BROWSE -> {
                 val arg = r.arg.trim()
                 val isUrl = arg.startsWith("http") || arg.startsWith("www.")
                 if (isUrl) startAgentBrowse("browse ${arg.take(80)} and tell me what's there", arg)
                 else startAgentBrowse(arg, "")
             }
-            Intents.Kind.DEPLOY -> openToolboxSheet()
+            // DEPLOY is no longer an intent: "deploy my site" belongs to the
+            // chat lane, where the AI builds the page and the tool loop ships
+            // it — stealing the phrase for the toolbox sheet is exactly the
+            // "I said deploy and nothing happened" bug.
         }
     }
 

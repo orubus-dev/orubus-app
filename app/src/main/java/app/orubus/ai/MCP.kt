@@ -94,7 +94,7 @@ object Mcp {
             .url(url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
-            .header("User-Agent", "OrubusAI/3.7.0")
+            .header("User-Agent", "OrubusAI/3.7.2")
             .apply { if (!sessionId.isNullOrBlank()) header("mcp-session-id", sessionId) }
             .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
@@ -155,7 +155,7 @@ object Mcp {
                 .put("params", JSONObject()
                     .put("protocolVersion", PROTOCOL)
                     .put("capabilities", JSONObject())
-                    .put("clientInfo", JSONObject().put("name", "Orubus AI").put("version", "3.7.0")))
+                    .put("clientInfo", JSONObject().put("name", "Orubus AI").put("version", "3.7.2")))
             val (_, session) = rpc(url, null, initBody, 20)
             try {
                 rpc(url, session, JSONObject().put("jsonrpc", "2.0").put("method", "notifications/initialized"), 10)

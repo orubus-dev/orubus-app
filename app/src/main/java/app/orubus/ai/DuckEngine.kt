@@ -41,6 +41,13 @@ import java.util.concurrent.TimeUnit
 object DuckEngine {
 
     const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+    /**
+     * The client capability list the real browser declares on every turn
+     * (x-duckai-client-tools) — image generation is granted through THIS,
+     * never through the tool-approval header (that one stays "web-search").
+     */
+    const val CLIENT_TOOLS = """{"version":1,"capabilities":["image_generation","voice_chat","text_chat","summary","translation","chat_customizations","file_attachments","model_picker","chat_sync","tools_menu","reasoning_menu","how_ddg_works"]}"""
     const val FE_FALLBACK = "serp_20261023_062911_ET-cdb913a87384b7be1d189a4658c28200974bd694"
     const val ENTRY_FALLBACK = "f1b96d6b68aa7e4766b9"
 
@@ -434,7 +441,7 @@ object DuckEngine {
                 put("role", "user")
                 put("content", JSONArray().put(JSONObject().apply { put("type", "text"); put("text", prompt) }))
             }))
-            put("canUseTools", false)
+            put("canUseTools", true) // the paint turn rides the real client's own shape — tools on
             put("canDelegateImageGeneration", true)
             put("reasoningEffort", "none")
             put("canUseApproxLocation", JSONObject.NULL)
@@ -450,7 +457,12 @@ object DuckEngine {
             .header("x-fe-version", feVersion)
             .header("x-duckai-response-id", UUID.randomUUID().toString())
             .header("x-duckai-consent-purposes", "user-location,image-generation,web-search")
-            .header("x-duckai-tool-approval", "web-search,image-generation")
+            // EXACTLY the real client's headers: approval is "web-search" only
+            // ("image-generation" in this header is what earned duck-400
+            // ERR_BAD_REQUEST on every paint), and the capability list rides
+            // x-duckai-client-tools just like the browser does.
+            .header("x-duckai-tool-approval", "web-search")
+            .header("x-duckai-client-tools", CLIENT_TOOLS)
             .header("x-ddg-journey-id", t.journey)
             .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
@@ -481,8 +493,12 @@ object DuckEngine {
                 try {
                     val j = JSONObject(payload)
                     if (j.has("message") && !j.isNull("message")) text += j.getString("message")
-                    if (j.optString("action", "") == "error") throw DuckException(0, "duck-sse:${j.optString("type", "err")}")
-                    if (j.optString("type", "") == "success" && j.optString("name", "") == "generate-image") {
+                    if (j.optString("action", "") == "error") throw DuckException(0, "duck-sse:${j.optString("type", j.optString("error", "err"))}")
+                    // REAL event shape (probed live through the egress lane):
+                    // {role:"ui-component", name:"generate-image", action/state, data:{status,
+                    // b64Image, width, height, format, imageModelDisplayName}} — partial
+                    // previews arrive as data.type:"image-partial" while the picture cooks.
+                    if (j.optString("name", "") == "generate-image") {
                         val d = j.optJSONObject("data") ?: continue
                         when {
                             d.optString("status", "") == "success" && d.optString("b64Image", "").length > 512 -> {
