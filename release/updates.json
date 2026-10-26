@@ -1,27 +1,33 @@
 {
-  "v": 1,
-  "latest": {
-    "code": 9,
-    "name": "3.7.1",
-    "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.1/Orubus.apk",
-    "sha256": "e2495bfeb91faea563c2ca97cdd24c067461731db5c23723b334c0ea616d4b8b",
-    "size": 18340346,
-    "components": [
-      "core app",
-      "the updater"
-    ],
-    "notes": "the updater: updates now install in-app as small delta patches; arm64-only build (much smaller)"
-  },
-  "deltas": {
-    "8": {
-      "to": 9,
-      "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.1/Orubus-8to9.bsdiff",
-      "sha256": "0339317b2ab1eb2001d7e22fdac47bbd9d70951edfff478d92a7b6d40eff82e5",
-      "size": 6154979,
-      "components": [
-        "core app",
-        "the updater"
-      ]
-    }
+ "v": 1,
+ "latest": {
+  "code": 10,
+  "name": "3.7.2",
+  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.2/Orubus.apk",
+  "sha256": "25154deb5c2928e17302ce89a9d158d06d22daf9a89bda77f63cbad08ceb767f",
+  "size": 18340346,
+  "components": [
+   "core app",
+   "the voice lane",
+   "the paint lane",
+   "the browser",
+   "the toolbox"
+  ],
+  "notes": "voice rides the realtime /duckchat/v1 door (connecting now actually connects, relay-only media), image painting fixed end to end (the real event shape \u2014 partials stream while it cooks), every linked chat now carries the toolbox (say \"build me a site and deploy it\" \u2014 it ships to its own page), browser 2.0 (tabs, screen-eyes, layout positions, steadier lane), friendlier error lines."
+ },
+ "deltas": {
+  "9": {
+   "to": 10,
+   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.2/Orubus-9to10.bsdiff",
+   "sha256": "a65dfd2a2751fc951f4c6060833a01e7ab4651b28139f9793d6c0264175f3949",
+   "size": 3177106,
+   "components": [
+    "core app",
+    "the voice lane",
+    "the paint lane",
+    "the browser",
+    "the toolbox"
+   ]
   }
+ }
 }
