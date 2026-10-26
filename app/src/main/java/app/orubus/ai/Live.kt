@@ -64,7 +64,12 @@ object Live {
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .createAudioDeviceModule()
-        adm.setSpeakerphoneOn(true)
+        try {
+            // the call plays out loud — the speaker, not the earpiece
+            val am = AppCtx.get().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+            am.isSpeakerphoneOn = true
+        } catch (_: Exception) {}
         val f = PeerConnectionFactory.builder()
             .setAudioDeviceModule(adm)
             .createPeerConnectionFactory()
@@ -224,7 +229,6 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
 
             val f = Live.ensureFactory()
             val rtcConfig = PeerConnection.RTCConfiguration(Live.iceServers(token)).apply {
-                iceTransportsPolicy = PeerConnection.IceTransportsPolicy.RELAY
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             }
             val dcOpen = CountDownLatch(1)

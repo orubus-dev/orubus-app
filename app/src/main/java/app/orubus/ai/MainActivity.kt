@@ -1447,8 +1447,8 @@ class MainActivity : Activity() {
             textSize = 14f
             maxLines = if (multi) 3 else 1
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
-            typeface = W.regular(this)
-            background = W.stroke(this, W.theme.paper, 12)
+            typeface = W.regular(this@MainActivity)
+            background = W.stroke(this@MainActivity, W.theme.paper, 12)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         val goal = field("what should I do out there?", multi = true)
@@ -1476,7 +1476,7 @@ class MainActivity : Activity() {
         val name = try { java.net.URI(url).host?.removePrefix("www.") ?: url } catch (_: Exception) { url }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = W.shadowed(this, W.theme.paper, 12, 2)
+            background = W.shadowed(this@MainActivity, W.theme.paper, 12, 2)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         card.addView(W.label(this, "🧱 $name", 14f, W.theme.ink, heavy = 2))

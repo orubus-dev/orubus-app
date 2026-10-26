@@ -267,7 +267,7 @@ internal fun MainActivity.openToolboxSheet() {
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    background = W.shadowed(this, W.theme.paper, 12, 2)
+                    background = W.shadowed(this@openToolboxSheet, W.theme.paper, 12, 2)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     W.press(this)
                 }
