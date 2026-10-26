@@ -51,35 +51,37 @@ object Updater {
 
     // ---------- manifest ----------
 
-    private fun fetchManifest(): Pair<Latest, Delta?>? = try {
-        val j = Api.get(MANIFEST_URL)
-        val l = j.optJSONObject("latest") ?: return null
-        val latest = Latest(
-            code = l.optLong("code", 0),
-            name = l.optString("name", "?"),
-            url = l.optString("url", Api.APK_URL),
-            sha256 = l.optString("sha256", ""),
-            size = l.optLong("size", 0),
-            components = strList(l.optJSONArray("components")),
-            notes = l.optString("notes", ""),
-        )
-        if (latest.code <= 0) return null
-        var delta: Delta? = null
-        val installed = installedCode()
-        val d = j.optJSONObject("deltas")?.optJSONObject(installed.toString())
-        if (d != null && d.optLong("to", 0) == latest.code) {
-            val cand = Delta(
-                from = installed,
-                to = latest.code,
-                url = d.optString("url", ""),
-                size = d.optLong("size", 0),
-                components = strList(d.optJSONArray("components")),
+    private fun fetchManifest(): Pair<Latest, Delta?>? {
+        return try {
+            val j = Api.get(MANIFEST_URL)
+            val l = j.optJSONObject("latest") ?: return null
+            val latest = Latest(
+                code = l.optLong("code", 0),
+                name = l.optString("name", "?"),
+                url = l.optString("url", Api.APK_URL),
+                sha256 = l.optString("sha256", ""),
+                size = l.optLong("size", 0),
+                components = strList(l.optJSONArray("components")),
+                notes = l.optString("notes", ""),
             )
-            if (cand.url.isNotBlank()) delta = cand
+            if (latest.code <= 0) return null
+            var delta: Delta? = null
+            val installed = installedCode()
+            val d = j.optJSONObject("deltas")?.optJSONObject(installed.toString())
+            if (d != null && d.optLong("to", 0) == latest.code) {
+                val cand = Delta(
+                    from = installed,
+                    to = latest.code,
+                    url = d.optString("url", ""),
+                    size = d.optLong("size", 0),
+                    components = strList(d.optJSONArray("components")),
+                )
+                if (cand.url.isNotBlank()) delta = cand
+            }
+            latest to delta
+        } catch (_: Exception) {
+            null // CDN hiccup — the caller decides what "explicit" means
         }
-        latest to delta
-    } catch (_: Exception) {
-        null // CDN hiccup — the caller decides what "explicit" means
     }
 
     private fun strList(a: JSONArray?): List<String> =
