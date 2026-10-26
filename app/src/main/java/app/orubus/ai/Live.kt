@@ -170,7 +170,7 @@ private fun MainActivity.startLiveCallInner(onFail: (String) -> Unit) {
     col.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
 
     val caption = TextView(this).apply {
-        textSize = 15f; setTextColor(W.theme.ink); typeface = W.regular(this@startLiveCall)
+        textSize = 15f; setTextColor(W.theme.ink); typeface = W.regular(this@startLiveCallInner)
         gravity = Gravity.CENTER; setLineSpacing(dp(2).toFloat(), 1f)
         minLines = 2; maxLines = 6
     }

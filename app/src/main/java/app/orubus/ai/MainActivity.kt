@@ -1510,8 +1510,8 @@ class MainActivity : Activity() {
             textSize = 14f
             maxLines = if (multi) 3 else 1
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
-            typeface = W.regular(this@openBrowseDialog)
-            background = W.stroke(this@openBrowseDialog, W.theme.paper, 12)
+            typeface = W.regular(this@MainActivity)
+            background = W.stroke(this@MainActivity, W.theme.paper, 12)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         val goal = field("what should I do out there?", multi = true)

@@ -12,6 +12,7 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -345,7 +346,10 @@ internal fun MainActivity.startAgentBrowse(goalRaw: String, startUrlRaw: String)
         }.start()
     }
     sendBtn.setOnClickListener { sendUserLine() }
-    chatInput.setOnEditorActionListener { _, _, _ -> sendUserLine(); true }
+    chatInput.setOnEditorActionListener(android.widget.TextView.OnEditorActionListener { _, _, _ ->
+        sendUserLine()
+        true
+    })
 
     fun renderStrip() {
         main.post {
