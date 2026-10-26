@@ -1,11 +1,11 @@
 {
  "v": 1,
  "latest": {
-  "code": 10,
-  "name": "3.7.2",
-  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.2/Orubus.apk",
-  "sha256": "25154deb5c2928e17302ce89a9d158d06d22daf9a89bda77f63cbad08ceb767f",
-  "size": 18340346,
+  "code": 11,
+  "name": "3.7.3",
+  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3/Orubus.apk",
+  "sha256": "ca36e27fd9238dbb95a75e55fc6c3f75472e6e8409e84ba953d1029a450692ff",
+  "size": 18356730,
   "components": [
    "core app",
    "the voice lane",
@@ -13,14 +13,14 @@
    "the browser",
    "the toolbox"
   ],
-  "notes": "voice rides the realtime /duckchat/v1 door (connecting now actually connects, relay-only media), image painting fixed end to end (the real event shape \u2014 partials stream while it cooks), every linked chat now carries the toolbox (say \"build me a site and deploy it\" \u2014 it ships to its own page), browser 2.0 (tabs, screen-eyes, layout positions, steadier lane), friendlier error lines."
+  "notes": "the voice button can no longer take the app down with it (every trip now lands as the classic call, and a crash gets logged + explained on the next launch), calls bill 1 SU per 4 seconds in exact blocks, Brainwash v5 (the voice mask rides the session, provider slips get scrubbed before they archive), every tool now opens as a real popup with its workspace and result inside (paint even shows the art with save/share/edit), long-press any generated image for fullscreen/save/share/edit, chat with the browser in plain text while it drives, and instance sites: name + brief -> live site at a pretty link."
  },
  "deltas": {
-  "9": {
-   "to": 10,
-   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.2/Orubus-9to10.bsdiff",
-   "sha256": "a65dfd2a2751fc951f4c6060833a01e7ab4651b28139f9793d6c0264175f3949",
-   "size": 3177106,
+  "10": {
+   "to": 11,
+   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3/Orubus-10to11.bsdiff",
+   "sha256": "8e6c8f0d2e2294afebf4ea7da5976a36d1ca91d222001ff9ec2e50b3044c0bb2",
+   "size": 3191975,
    "components": [
     "core app",
     "the voice lane",
