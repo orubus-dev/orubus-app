@@ -198,18 +198,96 @@ object Toolbox {
      * turns that into the site card. The model's deploy_site tool call
      * returns DEPLOY_STARTED:<file> and the TURN LAYER finishes the hop by
      * calling this, so the URL lands where messages can carry it.
+     *
+     * `project` (optional) claims a pretty /users/<project> URL instead of
+     * a random slug — the instance-sites lane.
      */
-    fun deploySite(name: String): Pair<String, String> {
+    fun deploySite(name: String, project: String? = null): Pair<String, String> {
         val html = readFile(name)
         if (!name.endsWith(".html", true) && !html.contains("<html", true)) {
             throw Exception("that's not a web page — deploy needs an .html file")
         }
-        val r = Api.appSite("deploy", mapOf("name" to name.removeSuffix(".html"), "html" to html))
+        val r = if (project != null) {
+            Api.appSite("deploy", mapOf("project" to project, "html" to html))
+        } else {
+            Api.appSite("deploy", mapOf("name" to name.removeSuffix(".html"), "html" to html))
+        }
         if (!r.optBoolean("ok", false)) throw Exception(r.optString("error", "the deploy desk refused"))
         return name to r.optString("url", "")
     }
 
     // ---------- the sheet lives at file scope (top-level extension) ----------
+}
+
+/**
+ * One raw completion through the stable ladder: the device lane first, the
+ * server's raw 'appstep' lane second (billed like a normal turn, refunded
+ * when it fails too). The browser agent's ladder, shared with site builds.
+ */
+internal fun MainActivity.rawAgentStep(prompt: String, tier: String): String {
+    val msgs = JSONArray().put(JSONObject().apply {
+        put("role", "user")
+        put("content", JSONArray().put(JSONObject().put("type", "text").put("text", prompt)))
+    })
+    return try {
+        DuckEngine.chat(msgs, DuckEngine.modelFor(tier))
+    } catch (de: DuckEngine.NetworkDeadException) {
+        throw de
+    } catch (e: Exception) {
+        val fb = Api.post("appstep", mapOf("messages" to msgs, "tier" to tier))
+        runOnUiThread { try { fb.optJSONObject("wallet")?.let { renderWallet(it) } } catch (_: Throwable) {} }
+        if (!fb.optBoolean("ok", false)) throw Exception(fb.optString("error", "the lane is catching its breath"))
+        fb.optString("answer", "").ifBlank { throw Exception("the lane came back empty") }
+    }
+}
+
+/**
+ * INSTANCE SITES — the on-device website builder.
+ *
+ * The user picks a name and says what they want ("create a website for me:")
+ * — the AI writes the files directly on this device into the encrypted
+ * toolbox, the deploy desk publishes them under a pretty URL
+ * (<sites-host>/users/<project>), and a live link lands in the thread with
+ * an open button. A same-name rebuild by the same identity just updates it.
+ */
+internal fun MainActivity.buildInstanceSite(
+    briefRaw: String,
+    projectRaw: String,
+    onStatus: (String) -> Unit,
+    onDone: (name: String, url: String) -> Unit,
+    onFail: (String) -> Unit,
+) {
+    val brief = briefRaw.trim()
+    val project = projectRaw.lowercase().replace(Regex("[^a-z0-9-]"), "").trim('-')
+    if (brief.isBlank()) { onFail("say what the site should be first ✍"); return }
+    if (project.length < 3) { onFail("site names are 3+ letters, numbers or dashes"); return }
+    Thread {
+        try {
+            onStatus("designing your site…")
+            val contract = "You are a website generator. Write ONE complete, self-contained index.html file for this brief: $brief\n" +
+                "Rules: modern, clean, responsive design with real content (never lorem ipsum); inline CSS and JS only; " +
+                "no external requests (system fonts, inline SVG icons); include a working mobile layout; give it personality.\n" +
+                "Reply with the RAW HTML ONLY — no markdown fences, no commentary. Start with <!doctype html>."
+            var html = rawAgentStep(contract, tier)
+            html = html.trim().removePrefix("```html").removePrefix("```HTML").removePrefix("```").removeSuffix("```").trim()
+            if (!html.contains("<!doctype", true) && !html.contains("<html", true)) {
+                throw Exception("the site came back mangled — try again in a second")
+            }
+            if (html.length > 145_000) html = html.take(145_000)
+            onStatus("saving to the toolbox…")
+            Toolbox.createFile("$project.html", html)
+            onStatus("deploying…")
+            val r = Api.appSite("deploy", mapOf("project" to project, "html" to html))
+            if (!r.optBoolean("ok", false)) throw Exception(r.optString("error", "the deploy desk said no"))
+            val url = r.optString("url", "")
+            if (url.isBlank()) throw Exception("the deploy desk came back without a link")
+            onDone("$project.html", url)
+        } catch (de: DuckEngine.NetworkDeadException) {
+            onFail("no connection right now — the build waits, try again when you're back")
+        } catch (e: Exception) {
+            onFail(e.message ?: "the build slipped — try again in a moment")
+        }
+    }.start()
 }
 
 @SuppressLint("SetTextI18n")
@@ -255,8 +333,58 @@ internal fun MainActivity.openToolboxSheet() {
         scrim.setOnClickListener { dismiss() }
         close.setOnClickListener { dismiss() }
 
+        /** The instance-sites builder block — name + brief + BUILD & DEPLOY. */
+        fun siteBuilder(reload: () -> Unit): LinearLayout {
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = W.shadowed(this@openToolboxSheet, W.theme.paper, 14, 2)
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            }
+            box.addView(W.label(this, "⚡ INSTANCE SITES", 15f, W.theme.ink, heavy = 2))
+            box.addView(W.label(this, "your own live site at a pretty link — files written right on this device", 11f, W.theme.dim).apply { setPadding(0, dp(2), 0, dp(8)) })
+
+            fun bfield(hint: String): EditText = EditText(this).apply {
+                this.hint = hint
+                textSize = 13.5f
+                maxLines = 1
+                setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
+                typeface = W.regular(this@openToolboxSheet)
+                background = W.stroke(this@openToolboxSheet, W.theme.bg, 10)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+            }
+            val nameF = bfield("site name — my-shop, portfolio, links…")
+            box.addView(nameF, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
+            val briefF = bfield("what's the site? — \"a bakery landing page…\"").apply { maxLines = 3; gravity = Gravity.TOP }
+            box.addView(briefF, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
+
+            val st = W.label(this, "", 11.5f, W.theme.acc2).apply { visibility = View.GONE }
+            val go = W.button(this, "CREATE & DEPLOY", W.theme.acc, W.theme.ink, radiusDp = 10, small = true)
+            go.setOnClickListener {
+                buildInstanceSite(
+                    briefF.text.toString(),
+                    nameF.text.toString(),
+                    onStatus = { s -> runOnUiThread { st.text = s; st.visibility = View.VISIBLE } },
+                    onDone = { n, url ->
+                        runOnUiThread {
+                            st.text = "live at $url ⚡"
+                            pushSys("🚀 deployed — $url")
+                            Store.append(Store.currentChat(), false, "🚀 deployed \"$n\"", site = url)
+                            loadCurrentChat()
+                            reload()
+                        }
+                    },
+                    onFail = { m -> runOnUiThread { st.text = m; st.visibility = View.VISIBLE } },
+                )
+            }
+            box.addView(go, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            box.addView(st, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+            return box
+        }
+
         fun render() {
             list.removeAllViews()
+            // ---- INSTANCE SITES: the builder input (writes on device, deploys, live url) ----
+            list.addView(siteBuilder { render() })
             val files = Toolbox.list()
             if (files.isEmpty()) {
                 list.addView(W.label(this, "empty for now.\nask the AI in chat — \"build me a pricing page and deploy it\" — and watch the toolbox fill up.", 12.5f, W.theme.dim).apply {

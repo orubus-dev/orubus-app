@@ -157,72 +157,92 @@ internal fun MainActivity.startImageGen(promptRaw: String) {
 
     ImageGen.painting = true
     Thread {
-        var token = ""
-        var imgName = ""
-        var failLine = ""
         try {
-            val spend = Api.appGen(prompt)
-            spend.wallet?.let { runOnUiThread { renderWallet(it) } }
-            if (!spend.ok) throw Exception(spend.error.ifBlank { "the wallet couldn't cover the paint" })
-            token = spend.token
-
-            var got: DuckEngine.ImageGenResult? = null
-            try {
-                got = DuckEngine.chatImageGen(prompt, DuckEngine.modelFor(tier)) { b64, _, _ ->
-                    val bmp = ImageGen.decode(b64, 1024) ?: return@chatImageGen
-                    runOnUiThread {
-                        preview.layoutParams = LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT)
-                        preview.setImageBitmap(bmp)
-                        cap.text = "painting… the details are landing"
-                    }
-                }
-            } catch (de: Exception) {
-                if (de is DuckEngine.NetworkDeadException) throw de
-                // the phone's paint lane slipped — the server lane finishes on the SAME token
-                val fb = Api.appGenImg(token, prompt)
-                fb?.optJSONObject("wallet")?.let { runOnUiThread { renderWallet(it) } }
-                val b64 = fb?.optString("b64", "") ?: ""
-                if (fb == null || !fb.optBoolean("ok", false) || b64.isBlank()) {
-                    throw Exception(fb?.optString("error", "the paint lane slipped — the units went straight back") ?: "the paint lane slipped — the units went straight back")
-                }
-                got = DuckEngine.ImageGenResult(b64, fb.optInt("w", 0), fb.optInt("h", 0), fb.optString("format", "jpeg"), fb.optString("model", ""), "")
-            }
-
-            val bmp = ImageGen.decode(got!!.b64) ?: throw Exception("the picture came back unreadable — one more try?")
-            imgName = ImageGen.storeBitmap(bmp)
-            if (imgName.isBlank()) throw Exception("the picture couldn't be kept on this device")
-            Api.appDone(token, "[painted an image: ${prompt.take(80)}]")
-            token = ""
-            runOnUiThread {
-                removeView(row)
-                pushBotImage("🎨 $prompt", imgName, got.model)
-                Store.append(chat, false, "🎨 $prompt", img = imgName)
-            }
-        } catch (e: Exception) {
-            // human voice only — the raw lane words ("duck-400: …",
-            // "imggen:…", "no-challenge:429") never belong in a bubble
-            failLine = when {
-                Api.isNetErr(e) -> "no lane for the paint — nothing was spent, try again when you're back"
-                else -> {
-                    val raw = e.message ?: ""
-                    when {
-                        raw.contains("imggen:") -> "the painter slipped on that one — try rephrasing the prompt (nothing stays charged)"
-                        raw.contains("no-challenge") || raw.contains("duck-4") || raw.contains("duck-5") || raw.contains("duck-sse") ->
-                            "the paint lane is busy right now — give it a few seconds and try again"
-                        raw.contains("paint lane slipped") || raw.contains("units went straight back") -> raw // already human (server copy)
-                        else -> "the paint lane slipped — your units went straight back, try again in a moment"
-                    }
-                }
-            }
-            if (token.isNotBlank()) Thread { Api.appFail(token) }.start()
-            runOnUiThread {
-                removeView(row)
-                pushErr(failLine)
-            }
+            runPaintLane(
+                prompt,
+                onPreview = { bmp ->
+                    preview.layoutParams = LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    preview.setImageBitmap(bmp)
+                    cap.text = "painting… the details are landing"
+                },
+                onDone = { imgName, model ->
+                    removeView(row)
+                    pushBotImage("🎨 $prompt", imgName, model)
+                    Store.append(chat, false, "🎨 $prompt", img = imgName)
+                },
+                onFail = { failLine ->
+                    removeView(row)
+                    pushErr(failLine)
+                },
+            )
         } finally {
             ImageGen.painting = false
         }
     }.start()
+}
+
+/**
+ * The paint lane itself — one lane, two skins (chat card + tool sheet).
+ * Billing/fallback ladder identical to v3.7.2: appgen token → device paint
+ * → server lane on the same token → whole refund on a double slip.
+ */
+internal fun MainActivity.runPaintLane(
+    prompt: String,
+    onPreview: (android.graphics.Bitmap) -> Unit,
+    onDone: (imgName: String, model: String) -> Unit,
+    onFail: (msg: String) -> Unit,
+) {
+    var token = ""
+    var imgName = ""
+    try {
+        val spend = Api.appGen(prompt)
+        spend.wallet?.let { runOnUiThread { renderWallet(it) } }
+        if (!spend.ok) throw Exception(spend.error.ifBlank { "the wallet couldn't cover the paint" })
+        token = spend.token
+
+        var got: DuckEngine.ImageGenResult? = null
+        try {
+            got = DuckEngine.chatImageGen(prompt, DuckEngine.modelFor(tier)) { b64, _, _ ->
+                val bmp = ImageGen.decode(b64, 1024) ?: return@chatImageGen
+                runOnUiThread { try { onPreview(bmp) } catch (_: Throwable) {} }
+            }
+        } catch (de: Exception) {
+            if (de is DuckEngine.NetworkDeadException) throw de
+            // the phone's paint lane slipped — the server lane finishes on the SAME token
+            val fb = Api.appGenImg(token, prompt)
+            fb?.optJSONObject("wallet")?.let { runOnUiThread { renderWallet(it) } }
+            val b64 = fb?.optString("b64", "") ?: ""
+            if (fb == null || !fb.optBoolean("ok", false) || b64.isBlank()) {
+                throw Exception(fb?.optString("error", "the paint lane slipped — the units went straight back") ?: "the paint lane slipped — the units went straight back")
+            }
+            got = DuckEngine.ImageGenResult(b64, fb.optInt("w", 0), fb.optInt("h", 0), fb.optString("format", "jpeg"), fb.optString("model", ""), "")
+        }
+
+        val bmp = ImageGen.decode(got!!.b64) ?: throw Exception("the picture came back unreadable — one more try?")
+        imgName = ImageGen.storeBitmap(bmp)
+        if (imgName.isBlank()) throw Exception("the picture couldn't be kept on this device")
+        Api.appDone(token, "[painted an image: ${prompt.take(80)}]")
+        token = ""
+        runOnUiThread { onDone(imgName, got.model) }
+    } catch (e: Exception) {
+        // human voice only — the raw lane words ("duck-400: …",
+        // "imggen:…", "no-challenge:429") never belong in a bubble
+        val failLine = when {
+            Api.isNetErr(e) -> "no lane for the paint — nothing was spent, try again when you're back"
+            else -> {
+                val raw = e.message ?: ""
+                when {
+                    raw.contains("imggen:") -> "the painter slipped on that one — try rephrasing the prompt (nothing stays charged)"
+                    raw.contains("no-challenge") || raw.contains("duck-4") || raw.contains("duck-5") || raw.contains("duck-sse") ->
+                        "the paint lane is busy right now — give it a few seconds and try again"
+                    raw.contains("paint lane slipped") || raw.contains("units went straight back") -> raw // already human (server copy)
+                    else -> "the paint lane slipped — your units went straight back, try again in a moment"
+                }
+            }
+        }
+        if (token.isNotBlank()) Thread { Api.appFail(token) }.start()
+        runOnUiThread { onFail(failLine) }
+    }
 }
 
 private fun MainActivity.paintPlaceholder(): android.graphics.Bitmap {
@@ -241,7 +261,7 @@ private fun MainActivity.paintPlaceholder(): android.graphics.Bitmap {
     return bmp
 }
 
-/** The bot's art card — image, caption, long-press for save/share/regen. */
+/** The bot's art card — image, caption, long-press for edit/save/share. */
 @SuppressLint("SetTextI18n")
 internal fun MainActivity.pushBotImage(caption: String, imgName: String, model: String = "") {
     hideHello()
@@ -265,8 +285,10 @@ internal fun MainActivity.pushBotImage(caption: String, imgName: String, model: 
         }
         col.addView(iv)
     }
+    // the lane's own engine name never shows raw — the mask stays total
+    val shownModel = if (model.isBlank()) "" else if (Mask.clean(model) == model) model else "painted on this device"
     col.addView(TextView(this).apply {
-        text = caption + (if (model.isNotBlank()) "\n· $model" else "")
+        text = caption + (if (shownModel.isNotBlank()) "\n· $shownModel" else "")
         textSize = 12f
         setTextColor(W.theme.dim)
         typeface = W.medium(this@pushBotImage)
@@ -275,10 +297,11 @@ internal fun MainActivity.pushBotImage(caption: String, imgName: String, model: 
     W.press(col)
     col.setOnLongClickListener {
         val items = mutableListOf<Triple<String, Boolean, () -> Unit>>()
+        items.add(Triple("Open fullscreen", false) { showImageFullScreen(imgName) })
         items.add(Triple("Save to gallery", false) { ImageGen.saveToGallery(this, imgName) })
         items.add(Triple("Share", false) { ImageGen.shareImage(this, imgName) })
-        items.add(Triple("Paint it again", false) {
-            startImageGen(caption.removePrefix("🎨").trim())
+        items.add(Triple("Edit in paint", false) {
+            openImageGenSheet(prefill = caption.removePrefix("🎨").trim())
         })
         showFingerMenu(col, resources.displayMetrics.widthPixels / 2f, resources.displayMetrics.heightPixels / 3f, items)
         true
@@ -287,27 +310,116 @@ internal fun MainActivity.pushBotImage(caption: String, imgName: String, model: 
     scrollEnd()
 }
 
-/** The paint dialog — prompt in, cost chip honest, generate. */
-internal fun MainActivity.openImageGenSheet() {
-    val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), 0) }
+/**
+ * The paint tool popup — ChatGPT-style: prompt, PAINT, and the result lives
+ * right here in the sheet with its own actions (everything still lands in
+ * the thread). `prefill` seeds the prompt for the Edit flow.
+ */
+@SuppressLint("SetTextI18n")
+internal fun MainActivity.openImageGenSheet(prefill: String = "") {
+    val sheet = ToolSheet(this, "🎨", "PAINT", "${imageGenCost()} SU per image · painted right on this device", tall = true)
+    val pad = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), 0) }
+
     val input = EditText(this).apply {
         hint = "a small orange cat, sticker style…"
-        textSize = 14f; minLines = 2; maxLines = 4; gravity = Gravity.TOP
+        textSize = 14f; minLines = 2; maxLines = 5; gravity = Gravity.TOP
         setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
         typeface = W.regular(this@openImageGenSheet)
         background = W.stroke(this@openImageGenSheet, W.theme.paper, 12)
         setPadding(dp(12), dp(10), dp(12), dp(10))
+        setText(prefill)
     }
-    box.addView(input)
-    box.addView(W.label(this, "${imageGenCost()} SU per image · painted right on this device", 11.5f, W.theme.dim).apply { setPadding(0, dp(8), 0, 0) })
-    orubusDialog(
-        "Paint an image",
-        "",
-        "PAINT", "CANCEL",
-        bodyView = box,
-        onPositive = {
-            val prompt = input.text.toString().trim()
-            if (prompt.isNotBlank()) startImageGen(prompt)
+    pad.addView(input)
+
+    val goBtn = W.button(this, "PAINT", W.theme.acc, W.theme.ink, radiusDp = 12)
+    pad.addView(goBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+
+    // the result block — born empty, filled when the art lands
+    val result = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+    pad.addView(result, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+
+    sheet.body.addView(pad)
+    sheet.show()
+
+    fun paint() {
+        val prompt = input.text.toString().trim()
+        if (prompt.isBlank()) {
+            sheet.status("say what to paint first ✍")
+            return
         }
-    )
+        if (ImageGen.painting || sending) {
+            sheet.status("one paint at a time — let the current one land")
+            return
+        }
+        if (Api.cookieValue.isBlank()) {
+            sheet.status("painting rides the wallet — link first (⚙ → identity)")
+            return
+        }
+        val chat = Store.currentChat()
+        result.removeAllViews()
+        result.visibility = View.GONE
+        goBtn.isEnabled = false
+        input.isEnabled = false
+        sheet.status("painting · ${imageGenCost()} SU — watch it form…")
+        Store.append(chat, true, "🎨 $prompt")
+        pushUser("🎨 $prompt")
+
+        ImageGen.painting = true
+        Thread {
+            try {
+                runPaintLane(
+                    prompt,
+                    onPreview = { sheet.status("painting… the details are landing") },
+                    onDone = { imgName, model ->
+                        goBtn.isEnabled = true
+                        input.isEnabled = true
+                        sheet.status("done — it lives in the thread too ⚡")
+                        result.removeAllViews()
+                        result.visibility = View.VISIBLE
+                        val bmp = Store.loadImage(imgName)
+                        if (bmp != null) {
+                            val w = (resources.displayMetrics.widthPixels * 0.72f).toInt()
+                            val iv = ImageView(this).apply {
+                                layoutParams = LinearLayout.LayoutParams(w, (bmp.height * (w.toFloat() / bmp.width)).toInt())
+                                adjustViewBounds = true
+                                clipToOutline = true
+                                outlineProvider = object : ViewOutlineProvider() {
+                                    override fun getOutline(view: View, outline: Outline) {
+                                        outline.setRoundRect(0, 0, view.width, view.height, dp(14).toFloat())
+                                    }
+                                }
+                                background = W.stroke(this@openImageGenSheet, W.theme.acc, 14, 2)
+                                setImageBitmap(bmp)
+                                setOnClickListener { showImageFullScreen(imgName) }
+                                W.press(this)
+                            }
+                            result.addView(iv)
+                            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                            row.addView(W.button(this, "SAVE", W.theme.paper, W.theme.ink, radiusDp = 10, small = true).apply {
+                                setOnClickListener { ImageGen.saveToGallery(this@openImageGenSheet, imgName) }
+                            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(4) })
+                            row.addView(W.button(this, "SHARE", W.theme.paper, W.theme.ink, radiusDp = 10, small = true).apply {
+                                setOnClickListener { ImageGen.shareImage(this@openImageGenSheet, imgName) }
+                            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(4) })
+                            row.addView(W.button(this, "EDIT", W.theme.paper, W.theme.ink, radiusDp = 10, small = true).apply {
+                                setOnClickListener { input.setText(prompt); input.requestFocus() }
+                            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                            result.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+                        }
+                        pushBotImage("🎨 $prompt", imgName, model)
+                        Store.append(chat, false, "🎨 $prompt", img = imgName)
+                    },
+                    onFail = { msg ->
+                        goBtn.isEnabled = true
+                        input.isEnabled = true
+                        sheet.status(msg)
+                        pushErr(msg)
+                    },
+                )
+            } finally {
+                ImageGen.painting = false
+            }
+        }.start()
+    }
+    goBtn.setOnClickListener { paint() }
 }

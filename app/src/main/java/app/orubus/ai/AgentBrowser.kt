@@ -44,6 +44,8 @@ object AgentBrowser {
     internal const val MAX_MS = 4 * 60_000L
     internal const val MAX_TABS = 3
     internal const val MAX_SEES = 2
+    /** how long a finished agent lingers on the page waiting for the next line */
+    internal const val IDLE_MS = 120_000L
 
     class Tab(val id: Int, val web: WebView, var title: String, var url: String)
 
@@ -56,6 +58,8 @@ object AgentBrowser {
         @Volatile var stopped: Boolean = false,
         @Volatile var sees: Int = 0,
     ) {
+        /** the human's mid-run lines — plain text drives the agent ("open it up") */
+        val userMsgs = java.util.concurrent.ConcurrentLinkedQueue<String>()
         fun activeTab(): Tab? = tabs.firstOrNull { it.id == active }
     }
 
@@ -176,6 +180,7 @@ object AgentBrowser {
         |START (or stay): $startUrl
         |After every step you receive a PAGE summary with ELEMENTS numbered [0]..[n], each with its on-screen position (x,y w×h).
         |You may have several tabs open — they are listed as TABS: [id] title — url (active).
+        |The user can chat with you WHILE you drive: lines starting with USER SAYS are their live words — treat them as fresh instructions and answer them too.
         |Reply with EXACTLY one line, one of:
         |⟦ACT⟧{"act":"goto","url":"https://…"}
         |⟦ACT⟧{"act":"click","i":3}
@@ -187,8 +192,9 @@ object AgentBrowser {
         |⟦ACT⟧{"act":"newtab","url":"https://…"}    — open a background research tab (max 3 tabs total)
         |⟦ACT⟧{"act":"switchtab","i":1}
         |⟦ACT⟧{"act":"closetab","i":1}
+        |⟦ACT⟧{"act":"say","text":"…"}    — answer the user in plain words without touching the page (questions, status, explanations)
         |⟦ACT⟧{"act":"done","summary":"what happened"}
-        |Rules: never invent element numbers you can't see; typing into [password] fields is allowed when the user asked for sign-ins; if a CAPTCHA or a human check appears, reply wait once then done — the user takes over manually, NEVER bypass protections; when the goal is reached, reply done.
+        |Rules: never invent element numbers you can't see; typing into [password] fields is allowed when the user asked for sign-ins; if a CAPTCHA or a human check appears, reply wait once then done — the user takes over manually, NEVER bypass protections; when the goal is reached, reply done. When the user asks something that needs no page action, reply say.
     """.trimIndent()
 
     fun parseAct(reply: String): JSONObject? {
@@ -286,8 +292,23 @@ internal fun MainActivity.startAgentBrowse(goalRaw: String, startUrlRaw: String)
     val stack = FrameLayout(this)
     col.addView(stack, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+    // ---- the chat bar: plain text drives the agent mid-run ----
+    val chatRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(5), dp(8), dp(3)) }
+    val chatInput = EditText(this).apply {
+        hint = "chat with it — \"what's this site?\", \"open it up\"…"
+        textSize = 13.5f; maxLines = 2
+        setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
+        typeface = W.regular(this@startAgentBrowse)
+        background = W.stroke(this@startAgentBrowse, W.theme.paper, 12)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+    }
+    chatRow.addView(chatInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    val sendBtn = W.button(this, "SEND", W.theme.acc, W.theme.ink, radiusDp = 99, small = true)
+    chatRow.addView(sendBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) })
+    col.addView(chatRow)
+
     val foot = W.label(this, "everything happens on THIS screen — pause and it's your browser", 11f, W.theme.dim).apply {
-        gravity = Gravity.CENTER; setPadding(dp(10), dp(7), dp(10), dp(9))
+        gravity = Gravity.CENTER; setPadding(dp(10), dp(5), dp(10), dp(8))
     }
     col.addView(foot)
     overlay.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -310,6 +331,21 @@ internal fun MainActivity.startAgentBrowse(goalRaw: String, startUrlRaw: String)
         Unit
     }
     val setCaption: (String) -> Unit = { s -> main.post { if (!closed) caption.text = s } }
+
+    // the human's line rides in: echo on the caption, into the queue, into the thread
+    fun sendUserLine() {
+        val line = chatInput.text.toString().trim()
+        if (line.isBlank()) return
+        chatInput.setText("")
+        task.userMsgs.add(line)
+        setCaption("you: ${line.take(80)}")
+        Thread {
+            Store.append(chat, true, "🌐 $line")
+            runOnUiThread { if (!closed && chat.id == Store.currentChatId()) pushUser("🌐 $line") }
+        }.start()
+    }
+    sendBtn.setOnClickListener { sendUserLine() }
+    chatInput.setOnEditorActionListener { _, _, _ -> sendUserLine(); true }
 
     fun renderStrip() {
         main.post {
@@ -446,13 +482,12 @@ internal fun MainActivity.startAgentBrowse(goalRaw: String, startUrlRaw: String)
         }
     }
 
-    // ---- the loop ----
+    // ---- the conversation loop: act → answer → listen → act again ----
     Thread {
         val pre = (if (prelude.isNotBlank()) "$prelude\n\n" else "") +
             "You are driving the user's browser to reach the goal. Minimal steps, no detours.\n\n" +
             AgentBrowser.contract(goal, startUrl)
         var summary = "PAGE: (fresh)\n"
-        var finalLine = ""
         val t0 = System.currentTimeMillis()
         try {
             val first = java.util.concurrent.CountDownLatch(1)
@@ -465,124 +500,157 @@ internal fun MainActivity.startAgentBrowse(goalRaw: String, startUrlRaw: String)
                 see { desc -> summary += desc; latch.countDown() }
                 latch.await(35, java.util.concurrent.TimeUnit.SECONDS)
             }
-            for (step in 0 until AgentBrowser.MAX_STEPS) {
-                if (task.stopped) return@Thread
-                if (task.paused) { Thread.sleep(700); continue }
-                setCaption("step ${step + 1}/${AgentBrowser.MAX_STEPS} · deciding…")
-                val reply = stepReply("$pre\n\n${summary.take(6000)}")
-                val act = AgentBrowser.parseAct(reply)
-                if (act == null) { setCaption("the agent spoke plain — ending here"); break }
-                when (act.optString("act")) {
-                    "goto" -> {
-                        var u = act.optString("url", "")
-                        if (u.isNotBlank() && !u.startsWith("http")) u = "https://" + u
-                        setCaption("opening ${u.take(60)}")
-                        main.post { task.activeTab()?.web?.loadUrl(u) }
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "click" -> {
-                        val i = act.optInt("i", -1)
-                        setCaption("tapping [$i]…")
-                        main.post { task.activeTab()?.web?.evaluateJavascript(AgentBrowser.clickJs(i), null) }
-                        Thread.sleep(2300)
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "type" -> {
-                        val i = act.optInt("i", -1)
-                        setCaption("typing into [$i]…")
-                        main.post { task.activeTab()?.web?.evaluateJavascript(AgentBrowser.typeJs(i, act.optString("text", ""), act.optBoolean("submit", false)), null) }
-                        Thread.sleep(2500)
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "scroll" -> {
-                        val dy = act.optInt("dy", 600).coerceIn(-3000, 3000)
-                        main.post { task.activeTab()?.web?.evaluateJavascript("window.scrollBy(0,$dy)", null) }
-                        Thread.sleep(900)
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "back" -> {
-                        main.post { task.activeTab()?.web?.let { w -> if (w.canGoBack()) w.goBack() } }
-                        Thread.sleep(1500)
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "wait" -> {
-                        setCaption("a human check is on the page — TAKE THE WHEEL, solve it, HAND BACK")
-                        Thread.sleep(4000)
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() + "NOTE: the human may have solved a check — describe what you see.\n" }
-                    }
-                    "see" -> {
-                        setCaption("looking at the screen…")
-                        val latch = java.util.concurrent.CountDownLatch(1)
-                        see { desc -> summary += desc; latch.countDown() }
-                        latch.await(35, java.util.concurrent.TimeUnit.SECONDS)
-                    }
-                    "newtab" -> {
-                        var u = act.optString("url", "")
-                        if (u.isNotBlank() && !u.startsWith("http")) u = "https://" + u
-                        if (tabs.size >= AgentBrowser.MAX_TABS) {
-                            setCaption("the tab shelf is full (${AgentBrowser.MAX_TABS}) — switching instead")
-                        } else {
-                            setCaption("opening tab ${tabs.size + 1}…")
-                            val latch = java.util.concurrent.CountDownLatch(1)
-                            makeTab(u) { latch.countDown() }
-                            latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
-                            if (tabs.isNotEmpty() && task.active == tabs.last().id) setCaption("tab ${task.active + 1} open — now on it")
+
+            fun runSteps(): String {
+                var finalLine = ""
+                for (step in 0 until AgentBrowser.MAX_STEPS) {
+                    if (task.stopped) return finalLine.ifBlank { "the browse ended" }
+                    if (task.paused) { Thread.sleep(700); continue }
+                    // the human's mid-run words ride in BEFORE the model decides
+                    var userLines = ""
+                    while (true) { val m = task.userMsgs.poll() ?: break; userLines += "USER SAYS: $m\n" }
+                    setCaption("step ${step + 1}/${AgentBrowser.MAX_STEPS} · deciding…")
+                    val reply = stepReply("$pre\n${userLines}${summary.take(6000)}")
+                    val act = AgentBrowser.parseAct(reply)
+                    if (act == null) { setCaption("the agent spoke plain — ending here"); break }
+                    when (act.optString("act")) {
+                        "goto" -> {
+                            var u = act.optString("url", "")
+                            if (u.isNotBlank() && !u.startsWith("http")) u = "https://" + u
+                            setCaption("opening ${u.take(60)}")
+                            main.post { task.activeTab()?.web?.loadUrl(u) }
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
                         }
-                        Thread.sleep(1800)
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "switchtab" -> {
-                        val i = act.optInt("i", -1)
-                        val t = tabs.firstOrNull { it.id == i }
-                        if (t != null) {
-                            task.active = i
-                            main.post {
-                                for (v in tabs) v.web.visibility = if (v.id == task.active) View.VISIBLE else View.GONE
-                                renderStrip()
-                            }
-                            setCaption("switched to tab ${i + 1}")
+                        "click" -> {
+                            val i = act.optInt("i", -1)
+                            setCaption("tapping [$i]…")
+                            main.post { task.activeTab()?.web?.evaluateJavascript(AgentBrowser.clickJs(i), null) }
+                            Thread.sleep(2300)
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        }
+                        "type" -> {
+                            val i = act.optInt("i", -1)
+                            setCaption("typing into [$i]…")
+                            main.post { task.activeTab()?.web?.evaluateJavascript(AgentBrowser.typeJs(i, act.optString("text", ""), act.optBoolean("submit", false)), null) }
+                            Thread.sleep(2500)
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        }
+                        "scroll" -> {
+                            val dy = act.optInt("dy", 600).coerceIn(-3000, 3000)
+                            main.post { task.activeTab()?.web?.evaluateJavascript("window.scrollBy(0,$dy)", null) }
                             Thread.sleep(900)
-                        } else setCaption("no tab $i — staying put")
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
-                    }
-                    "closetab" -> {
-                        val i = act.optInt("i", -1)
-                        val t = tabs.firstOrNull { it.id == i }
-                        if (t != null && tabs.size > 1) {
-                            main.post {
-                                try { t.web.stopLoading() } catch (_: Exception) {}
-                                try { t.web.destroy() } catch (_: Exception) {}
-                                stack.removeView(t.web)
-                            }
-                            tabs.remove(t)
-                            if (task.active == i) task.active = tabs.first().id
-                            main.post {
-                                for (v in tabs) v.web.visibility = if (v.id == task.active) View.VISIBLE else View.GONE
-                                renderStrip()
-                            }
-                            setCaption("tab closed — ${tabs.size} left")
-                            Thread.sleep(700)
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
                         }
-                        readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        "back" -> {
+                            main.post { task.activeTab()?.web?.let { w -> if (w.canGoBack()) w.goBack() } }
+                            Thread.sleep(1500)
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        }
+                        "wait" -> {
+                            setCaption("a human check is on the page — TAKE THE WHEEL, solve it, HAND BACK")
+                            Thread.sleep(4000)
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() + "NOTE: the human may have solved a check — describe what you see.\n" }
+                        }
+                        "see" -> {
+                            setCaption("looking at the screen…")
+                            val latch = java.util.concurrent.CountDownLatch(1)
+                            see { desc -> summary += desc; latch.countDown() }
+                            latch.await(35, java.util.concurrent.TimeUnit.SECONDS)
+                        }
+                        "newtab" -> {
+                            var u = act.optString("url", "")
+                            if (u.isNotBlank() && !u.startsWith("http")) u = "https://" + u
+                            if (tabs.size >= AgentBrowser.MAX_TABS) {
+                                setCaption("the tab shelf is full (${AgentBrowser.MAX_TABS}) — switching instead")
+                            } else {
+                                setCaption("opening tab ${tabs.size + 1}…")
+                                val latch = java.util.concurrent.CountDownLatch(1)
+                                makeTab(u) { latch.countDown() }
+                                latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                                if (tabs.isNotEmpty() && task.active == tabs.last().id) setCaption("tab ${task.active + 1} open — now on it")
+                            }
+                            Thread.sleep(1800)
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        }
+                        "switchtab" -> {
+                            val i = act.optInt("i", -1)
+                            val t = tabs.firstOrNull { it.id == i }
+                            if (t != null) {
+                                task.active = i
+                                main.post {
+                                    for (v in tabs) v.web.visibility = if (v.id == task.active) View.VISIBLE else View.GONE
+                                    renderStrip()
+                                }
+                                setCaption("switched to tab ${i + 1}")
+                                Thread.sleep(900)
+                            } else setCaption("no tab $i — staying put")
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        }
+                        "closetab" -> {
+                            val i = act.optInt("i", -1)
+                            val t = tabs.firstOrNull { it.id == i }
+                            if (t != null && tabs.size > 1) {
+                                main.post {
+                                    try { t.web.stopLoading() } catch (_: Exception) {}
+                                    try { t.web.destroy() } catch (_: Exception) {}
+                                    stack.removeView(t.web)
+                                }
+                                tabs.remove(t)
+                                if (task.active == i) task.active = tabs.first().id
+                                main.post {
+                                    for (v in tabs) v.web.visibility = if (v.id == task.active) View.VISIBLE else View.GONE
+                                    renderStrip()
+                                }
+                                setCaption("tab closed — ${tabs.size} left")
+                                Thread.sleep(700)
+                            }
+                            readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                        }
+                        "say" -> {
+                            // a plain answer to a plain question — no page action
+                            finalLine = act.optString("text", "").ifBlank { "…done talking" }
+                            setCaption(finalLine)
+                        }
+                        "done" -> {
+                            finalLine = act.optString("summary", "done — the page is where you left it")
+                            setCaption(finalLine)
+                        }
+                        else -> break
                     }
-                    "done" -> {
-                        finalLine = act.optString("summary", "done — the page is where you left it")
-                        setCaption(finalLine)
-                    }
-                    else -> break
+                    if (finalLine.isNotBlank()) break
+                    if (System.currentTimeMillis() - t0 > AgentBrowser.MAX_MS) { finalLine = "time's up — the page is on your screen"; break }
                 }
-                if (finalLine.isNotBlank()) break
-                if (System.currentTimeMillis() - t0 > AgentBrowser.MAX_MS) { finalLine = "time's up — the page is on your screen"; break }
+                if (finalLine.isBlank()) finalLine = "paused at the step cap — the page is on screen; take the wheel or chat with me"
+                return finalLine
             }
-            if (finalLine.isBlank()) finalLine = "paused at the step cap — the page is on screen; take the wheel or browse again"
+
+            // CONVERSATION: every run answers, lands in the thread, then the
+            // agent stays on the page waiting for the next plain-text line
+            // ("what's GitHub website" → "open it up" → "sign me up…").
+            while (!task.stopped) {
+                val line = runSteps()
+                runOnUiThread {
+                    if (chat.id == Store.currentChatId()) pushBot(line)
+                }
+                Store.append(chat, false, line)
+                // linger for the human's next line
+                var idle = 0L
+                while (task.userMsgs.isEmpty() && !task.stopped && idle < AgentBrowser.IDLE_MS) {
+                    Thread.sleep(500); idle += 500
+                }
+                if (task.stopped) break
+                val next = task.userMsgs.poll() ?: break // idle timeout — rest, page stays open
+                setCaption("on it — ${next.take(70)}")
+                readPage { summary = AgentBrowser.summarize(it) + tabsLine() }
+                summary = "THE USER JUST SAID: $next\n" + summary
+            }
         } catch (e: Exception) {
-            finalLine = AgentBrowser.friendly(e)
-        }
-        val answer = finalLine.ifBlank { "the browse ended" }
-        runOnUiThread {
-            closeOverlay()
-            if (chat.id == Store.currentChatId()) pushBot(answer)
+            val answer = AgentBrowser.friendly(e)
+            runOnUiThread {
+                if (chat.id == Store.currentChatId()) pushBot(answer)
+            }
             Store.append(chat, false, answer)
         }
+        runOnUiThread { closeOverlay() }
     }.start()
 }

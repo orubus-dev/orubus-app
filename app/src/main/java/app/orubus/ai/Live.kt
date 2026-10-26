@@ -55,26 +55,32 @@ object Live {
     @Synchronized
     internal fun ensureFactory(): PeerConnectionFactory {
         factory?.let { return it }
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(AppCtx.get())
-                .setEnableInternalTracer(false)
-                .createInitializationOptions()
-        )
-        val adm = JavaAudioDeviceModule.builder(AppCtx.get())
-            .setUseHardwareAcousticEchoCanceler(true)
-            .setUseHardwareNoiseSuppressor(true)
-            .createAudioDeviceModule()
         try {
-            // the call plays out loud — the speaker, not the earpiece
-            val am = AppCtx.get().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
-            am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
-            am.isSpeakerphoneOn = true
-        } catch (_: Exception) {}
-        val f = PeerConnectionFactory.builder()
-            .setAudioDeviceModule(adm)
-            .createPeerConnectionFactory()
-        factory = f
-        return f
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(AppCtx.get())
+                    .setEnableInternalTracer(false)
+                    .createInitializationOptions()
+            )
+            val adm = JavaAudioDeviceModule.builder(AppCtx.get())
+                .setUseHardwareAcousticEchoCanceler(true)
+                .setUseHardwareNoiseSuppressor(true)
+                .createAudioDeviceModule()
+            try {
+                // the call plays out loud — the speaker, not the earpiece
+                val am = AppCtx.get().getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+                am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+                am.isSpeakerphoneOn = true
+            } catch (_: Exception) {}
+            val f = PeerConnectionFactory.builder()
+                .setAudioDeviceModule(adm)
+                .createPeerConnectionFactory()
+            factory = f
+            return f
+        } catch (t: Throwable) {
+            // a missing/mismatched webrtc native lib lands as an Error —
+            // this MUST become a soft exception so the classic call takes over
+            throw LiveException("this phone can't run the live voice engine (${t.javaClass.simpleName})")
+        }
     }
 
     internal fun iceServers(t: DuckEngine.Token): List<PeerConnection.IceServer> {
@@ -118,6 +124,18 @@ object Live {
 @SuppressLint("SetTextI18n")
 internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
     if (Live.inCall || calling) return
+    try {
+        startLiveCallInner(onFail)
+    } catch (t: Throwable) {
+        // nothing in the setup may ever kill the process — the classic call
+        // is the airbag for every rung of the live ladder
+        calling = false
+        Live.inCall = false
+        onFail("the live lane tripped on something (${t.javaClass.simpleName})")
+    }
+}
+
+private fun MainActivity.startLiveCallInner(onFail: (String) -> Unit) {
     if (Api.cookieValue.isBlank()) {
         onFail("the call needs your wallet — link first (⚙ → identity)")
         return
@@ -134,7 +152,6 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
     calling = true
     val main = Handler(Looper.getMainLooper())
     var secs = 0
-    var lastTick = 0
 
     // ---- overlay ----
     val overlay = FrameLayout(this).apply { setBackgroundColor(W.theme.bg) }
@@ -172,20 +189,24 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
     val setCaption: (String) -> Unit = { s -> runOnUiThread { caption.text = s } }
     val setWave: (Float) -> Unit = { e -> runOnUiThread { wave.energy = e } }
 
-    // ---- metering: the same wallet tick as the legacy call ----
+    // ---- metering: 1 SU per 4 seconds (= 15 per minute) on the SAME wallet ----
     fun chargeTick(seconds: Int, done: (Boolean, String) -> Unit) {
         Thread {
-            val r = Api.voiceTick(seconds)
-            runOnUiThread {
-                r?.optJSONObject("wallet")?.let { renderWallet(it) }
-                if (r == null) done(true, "")
-                else if (r.optBoolean("ok", false)) done(true, "")
-                else done(false, r.optString("error", "units ran dry — the call ends here"))
-            }
+            val r = try { Api.voiceTick(seconds) } catch (_: Throwable) { null }
+            try {
+                runOnUiThread {
+                    try { r?.optJSONObject("wallet")?.let { renderWallet(it) } } catch (_: Throwable) {}
+                    if (r == null) done(true, "")
+                    else if (r.optBoolean("ok", false)) done(true, "")
+                    else done(false, r.optString("error", "units ran dry — the call ends here"))
+                }
+            } catch (_: Throwable) {}
         }.start()
     }
 
     var ended = false
+    var billed = 0
+    var billingInFlight = false
     val chat = Store.currentChat()
     val assistantText = StringBuffer()
     val offerHolder = arrayOf<String?>(null)
@@ -193,8 +214,8 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
     fun finish(note: String) {
         if (ended) return
         ended = true
-        val tail = secs - lastTick
-        if (tail >= 15) chargeTick(tail) { _, _ -> }
+        val tail = secs - billed
+        if (tail >= 4 && !billingInFlight) chargeTick(tail) { _, _ -> }
         runOnUiThread {
             overlay.animate().alpha(0f).setDuration(180).withEndAction { screen.removeView(overlay) }.start()
             calling = false
@@ -205,17 +226,26 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
         }
     }
 
+    fun chargeBlocks() {
+        if (billingInFlight) return
+        val blocks = (secs - billed) / 4
+        if (blocks < 1) return
+        billingInFlight = true
+        billed += blocks * 4
+        chargeTick(blocks * 4) { okNow, err ->
+            billingInFlight = false
+            if (!okNow && !ended) finish(err)
+        }
+    }
+
     endBtn.setOnClickListener { finish("call ended — ${secs / 60}m ${secs % 60}s, everything said is in the thread ⚡") }
 
     val ticker = object : Runnable {
         override fun run() {
             if (ended) return
             secs += 1
-            timer.text = "${secs / 60}:${(secs % 60).toString().padStart(2, '0')}"
-            if (secs - lastTick >= 60) {
-                lastTick = secs
-                chargeTick(60) { okNow, err -> if (!okNow && !ended) finish(err) }
-            }
+            try { timer.text = "${secs / 60}:${(secs % 60).toString().padStart(2, '0')}" } catch (_: Throwable) {}
+            chargeBlocks()
             main.postDelayed(this, 1000)
         }
     }
@@ -283,6 +313,16 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
                 override fun onStateChange() {
                     if (channel?.state() == DataChannel.State.OPEN) {
                         dcOpen.countDown()
+                        // brainwash v5 — the mask rides the session the moment
+                        // the channel lives. Unsupported shapes just answer an
+                        // error event; the call never depends on this taking.
+                        try {
+                            val upd = JSONObject()
+                                .put("type", "session.update")
+                                .put("session", JSONObject().put("instructions", Mask.VOICE))
+                            channel?.send(DataChannel.Buffer(
+                                java.nio.ByteBuffer.wrap(upd.toString().toByteArray(Charsets.UTF_8)), false))
+                        } catch (_: Throwable) {}
                         setStatus("live — just talk")
                         setWave(0.62f)
                     }
@@ -375,11 +415,22 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
             else (e.message ?: "the live lane failed").take(160)
             ended = true
             runOnUiThread {
-                overlay.animate().alpha(0f).setDuration(160).withEndAction { screen.removeView(overlay) }.start()
+                try {
+                    overlay.animate().alpha(0f).setDuration(160).withEndAction { screen.removeView(overlay) }.start()
+                } catch (_: Throwable) {}
                 calling = false
                 Live.inCall = false
             }
             onFail(msg)
+        } catch (t: Throwable) {
+            // Errors (native lib loads, OOM) land here — the process lives on
+            ended = true
+            runOnUiThread {
+                try { screen.removeView(overlay) } catch (_: Throwable) {}
+                calling = false
+                Live.inCall = false
+            }
+            onFail("the live lane hit ${t.javaClass.simpleName} — the classic call takes over")
         } finally {
             try { source?.dispose() } catch (_: Exception) {}
             try { pc?.close() } catch (_: Exception) {}
@@ -413,7 +464,7 @@ private fun handleLiveEvent(
             setWave(0.4f)
         }
         type.startsWith("conversation.item.input_audio_transcription") -> {
-            val said = j.optString("transcript", "").trim()
+            val said = Mask.clean(j.optString("transcript", "").trim())
             if (said.isNotBlank()) {
                 setCaption(said)
                 Store.append(chat, true, "🎙 $said")
@@ -431,17 +482,17 @@ private fun handleLiveEvent(
         }
         type == "response.output_audio_transcript.delta" -> {
             assistantText.append(j.optString("delta", ""))
-            setCaption(assistantText.toString())
+            setCaption(Mask.clean(assistantText.toString()))
         }
         type == "response.done" -> {
-            val said = assistantText.toString().trim()
+            val said = Mask.clean(assistantText.toString().trim())
             if (said.isNotBlank()) Store.append(chat, false, said)
             assistantText.setLength(0)
             setStatus("listening — just talk")
             setWave(0.62f)
         }
         type.startsWith("error") || j.has("error") -> {
-            val m = j.optJSONObject("error")?.optString("message", "") ?: j.optString("message", "")
+            val m = Mask.clean(j.optJSONObject("error")?.optString("message", "") ?: j.optString("message", ""))
             if (m.isNotBlank()) setCaption(m.take(140))
         }
     }

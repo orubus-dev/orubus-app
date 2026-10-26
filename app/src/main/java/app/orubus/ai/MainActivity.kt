@@ -126,6 +126,7 @@ class MainActivity : Activity() {
         val prefs = Store.prefs()
         Api.cookieValue = prefs.getString("cookie", "") ?: ""
         W.theme = W.themeFor(prefs.getString("theme", "") ?: "")
+        installCrashNet()
         bars()
         applyWindowBg()
 
@@ -136,6 +137,36 @@ class MainActivity : Activity() {
 
         if (!prefs.getBoolean("legal_ok", false)) showLegalGate() else next()
     }
+
+    /**
+     * The crash net: every uncaught Throwable gets its signature written to
+     * filesDir/crash.log BEFORE the system does what it does, and the NEXT
+     * launch tells the human what happened in one honest line. A crash we
+     * can see is a crash we can kill.
+     */
+    private fun installCrashNet() {
+        val prior = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                java.io.File(filesDir, "crash.log").writeText(
+                    "${System.currentTimeMillis()}|${t.name}|${e.javaClass.name}|${e.stackTraceToString().take(3000)}",
+                )
+            } catch (_: Throwable) {}
+            prior?.uncaughtException(t, e)
+        }
+        try {
+            val f = java.io.File(filesDir, "crash.log")
+            if (f.exists()) {
+                val line = f.readText().lineSequence().firstOrNull().orEmpty()
+                val cls = line.split("|").getOrNull(2)?.substringAfterLast('.') ?: ""
+                f.delete()
+                if (cls.isNotBlank()) lastCrashNote = "the last build hit a crash ($cls) — this one hardens that path ⚡"
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /** Surfaced into the thread right after the UI settles (null = no crash). */
+    internal var lastCrashNote: String? = null
 
     private fun next() {
         if (Api.cookieValue.isBlank()) showTokenScreen() else enterMain()
@@ -315,6 +346,7 @@ class MainActivity : Activity() {
         buildSettingsPanel()
         buildDetail()
         buildSheet()
+        lastCrashNote?.let { pushSys(it); lastCrashNote = null }
 
         loadCurrentChat()
         // the welcome — friendly, warm, and it says exactly what this app is
@@ -977,6 +1009,16 @@ class MainActivity : Activity() {
         val overlay = FrameLayout(this).apply { setBackgroundColor(0xEE141414.toInt()) }
         val zoom = ZoomImage(this)
         zoom.setImageBitmap(bmp)
+        // long-press in the viewer too — save/share/edit, same as the bubble
+        zoom.setOnLongClickListener {
+            val items = mutableListOf<Triple<String, Boolean, () -> Unit>>(
+                Triple("Save to gallery", false) { ImageGen.saveToGallery(this, name) },
+                Triple("Share", false) { ImageGen.shareImage(this, name) },
+                Triple("Edit in paint", false) { openImageGenSheet(prefill = "") },
+            )
+            showFingerMenu(it, resources.displayMetrics.widthPixels / 2f, resources.displayMetrics.heightPixels / 3f, items)
+            true
+        }
         overlay.addView(zoom, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val close = W.iconBtn(this, W.Icon.CLOSE, W.theme.paper)
         close.setOnClickListener { screen.removeView(overlay) }
@@ -1459,32 +1501,33 @@ class MainActivity : Activity() {
         showFingerMenu(anchor, loc[0] + anchor.width / 2f, loc[1] + anchor.height / 2f, items)
     }
 
-    /** The browse brief: what to do out there, and where to start. */
+    /** The browse brief — the tool popup: what to do out there, where to start. */
     internal fun openBrowseDialog() {
+        val sheet = ToolSheet(this, "🌐", "BROWSE WITH ME", "I drive a real browser on this screen — you watch every step")
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), 0) }
         fun field(hint: String, multi: Boolean = false): EditText = EditText(this).apply {
             this.hint = hint
             textSize = 14f
             maxLines = if (multi) 3 else 1
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
-            typeface = W.regular(this@MainActivity)
-            background = W.stroke(this@MainActivity, W.theme.paper, 12)
+            typeface = W.regular(this@openBrowseDialog)
+            background = W.stroke(this@openBrowseDialog, W.theme.paper, 12)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         val goal = field("what should I do out there?", multi = true)
         val url = field("start from (optional) https://…")
         box.addView(goal)
         box.addView(url, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
-        orubusDialog(
-            "Browse with me",
-            "I'll drive a real browser right on this screen — you watch every step and can take the wheel anytime.",
-            "GO", "CANCEL",
-            bodyView = box,
-            onPositive = {
+        box.addView(W.button(this, "GO", W.theme.acc, W.theme.ink, radiusDp = 12).apply {
+            setOnClickListener {
                 val g = goal.text.toString().trim()
-                if (g.isNotBlank()) startAgentBrowse(g, url.text.toString().trim())
+                if (g.isBlank()) { sheet.status("tell me what to do out there first ✍"); return@setOnClickListener }
+                sheet.dismiss()
+                startAgentBrowse(g, url.text.toString().trim())
             }
-        )
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        sheet.body.addView(box)
+        sheet.show()
     }
 
     /** The deployed-site card — the "View generated website" button. */

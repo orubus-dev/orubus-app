@@ -34,8 +34,23 @@ import java.util.concurrent.atomic.AtomicBoolean
  * research → device lane → server brain), and every exchange lands in the
  * chat thread, so a call and a text conversation are one memory.
  */
+/** The guarded entry: nothing on this path may ever kill the process.
+ *  (the "keeps stopping" dialog — a Throwable escaping a worker thread —
+ *  is exactly what this wrapper exists to make impossible). */
 internal fun MainActivity.startVoiceCall() {
-    if (calling) return
+    try {
+        if (calling) return
+        startVoiceCallInner()
+    } catch (t: Throwable) {
+        calling = false
+        pushSys("the call tripped on something (${t.javaClass.simpleName}) — the classic line takes over")
+        try { buildCall() } catch (_: Throwable) {
+            pushSys("voice is resting on this phone — the keyboard still talks to me fine")
+        }
+    }
+}
+
+private fun MainActivity.startVoiceCallInner() {
     if (Api.cookieValue.isBlank()) {
         pushSys("the call needs your wallet — link first (⚙ → identity)")
         return
@@ -81,7 +96,6 @@ private fun MainActivity.buildCall() {
     var tts: TextToSpeech? = null
     var recognizer: SpeechRecognizer? = null
     var secs = 0
-    var lastTick = 0
     val speaking = AtomicBoolean(false)
     val ended = AtomicBoolean(false)
 
@@ -125,24 +139,42 @@ private fun MainActivity.buildCall() {
     })
     screen.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-    fun setStatus(s: String) { runOnUiThread { status.text = s } }
-    fun setCaption(s: String) { runOnUiThread { caption.text = s } }
-    fun waveEnergy(e: Float) { runOnUiThread { wave.energy = e } }
+    fun setStatus(s: String) { try { runOnUiThread { status.text = s } } catch (_: Throwable) {} }
+    fun setCaption(s: String) { try { runOnUiThread { caption.text = s } } catch (_: Throwable) {} }
+    fun waveEnergy(e: Float) { try { runOnUiThread { wave.energy = e } } catch (_: Throwable) {} }
 
-    // ---- the billing tick: voicePerMin per minute on the SAME wallet ----
+    // ---- the billing tick: 1 SU per 4 seconds (= 15 per minute) ----
+    // billed in exact 4-second blocks so a mid-call drop never loses more
+    // than a block and a jittered ticker never overcharges; the server does
+    // the math on the SAME wallet. An unreachable server never kills a call.
     fun chargeTick(seconds: Int, done: (Boolean, String) -> Unit) {
         Thread {
-            val r = Api.voiceTick(seconds)
-            runOnUiThread {
-                r?.optJSONObject("wallet")?.let { renderWallet(it) }
-                if (r == null) done(true, "") // an unreachable server never kills a live call
-                else if (r.optBoolean("ok", false)) done(true, "")
-                else done(false, r.optString("error", "units ran dry — the call ends here, the chat continues in text"))
-            }
+            val r = try { Api.voiceTick(seconds) } catch (_: Throwable) { null }
+            try {
+                runOnUiThread {
+                    try { r?.optJSONObject("wallet")?.let { renderWallet(it) } } catch (_: Throwable) {}
+                    if (r == null) done(true, "")
+                    else if (r.optBoolean("ok", false)) done(true, "")
+                    else done(false, r.optString("error", "units ran dry — the call ends here, the chat continues in text"))
+                }
+            } catch (_: Throwable) {}
         }.start()
     }
 
     var endCallNow: (String) -> Unit = {}
+    var billed = 0
+    var billingInFlight = false
+    fun chargeBlocks() {
+        if (billingInFlight) return
+        val blocks = (secs - billed) / 4
+        if (blocks < 1) return
+        billingInFlight = true
+        billed += blocks * 4
+        chargeTick(blocks * 4) { okNow, err ->
+            billingInFlight = false
+            if (!okNow && !ended.get()) endCallNow(err)
+        }
+    }
 
     // barge-in state: the answer currently spoken + whether the human cut in
     var ttsSpoken = ""
@@ -226,8 +258,13 @@ private fun MainActivity.buildCall() {
             })
     }
 
-    // ---- the recognizer ----
-    val rec = SpeechRecognizer.createSpeechRecognizer(this)
+    // ---- the recognizer (a phone without a speech service lands soft) ----
+    val rec: SpeechRecognizer? = try { SpeechRecognizer.createSpeechRecognizer(this) } catch (t: Throwable) { null }
+    if (rec == null) {
+        calling = false
+        pushSys("this phone has no speech service — the keyboard still talks to me fine")
+        return
+    }
     recognizer = rec
     rec.setRecognitionListener(object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) { setStatus("listening — just talk") }
@@ -279,10 +316,10 @@ private fun MainActivity.buildCall() {
         val tk = callTicker
         if (ended.compareAndSet(false, true)) {
             if (tk != null) main.removeCallbacks(tk)
-            try { rec.stopListening(); rec.destroy() } catch (_: Exception) {}
-            try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
-            val tail = secs - lastTick
-            if (tail >= 15) chargeTick(tail) { _, _ -> }
+            try { rec.stopListening(); rec.destroy() } catch (_: Throwable) {}
+            try { tts?.stop(); tts?.shutdown() } catch (_: Throwable) {}
+            val tail = secs - billed
+            if (tail >= 4 && !billingInFlight) chargeTick(tail) { _, _ -> }
             runOnUiThread {
                 overlay.animate().alpha(0f).setDuration(180).withEndAction {
                     screen.removeView(overlay)
@@ -295,18 +332,13 @@ private fun MainActivity.buildCall() {
         }
     }
 
-    // ---- the timer + metering ----
+    // ---- the timer + metering (one block every 4 seconds) ----
     val ticker = object : Runnable {
         override fun run() {
             if (ended.get()) return
             secs += 1
-            timer.text = "${secs / 60}:${(secs % 60).toString().padStart(2, '0')}"
-            if (secs - lastTick >= 60) {
-                lastTick = secs
-                chargeTick(60) { okNow, err ->
-                    if (!okNow && !ended.get()) endCallNow(err)
-                }
-            }
+            try { timer.text = "${secs / 60}:${(secs % 60).toString().padStart(2, '0')}" } catch (_: Throwable) {}
+            chargeBlocks()
             main.postDelayed(this, 1000)
         }
     }
@@ -315,12 +347,13 @@ private fun MainActivity.buildCall() {
     endBtn.setOnClickListener { endCallNow("call ended — ${secs / 60}m ${secs % 60}s, everything said is in the thread ⚡") }
 
     // ---- TTS up, then go live ----
-    tts = TextToSpeech(this) { st ->
-        if (st == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.US
-            tts?.setSpeechRate(1.0f)
+    tts = try {
+        TextToSpeech(this) { st ->
+            if (st == TextToSpeech.SUCCESS) {
+                try { tts?.language = Locale.US; tts?.setSpeechRate(1.0f) } catch (_: Throwable) {}
+            }
         }
-    }
+    } catch (_: Throwable) { null }
     main.post(ticker)
     setStatus("warming the mic…")
     main.postDelayed({ if (!ended.get()) listenAgain() }, 900)
