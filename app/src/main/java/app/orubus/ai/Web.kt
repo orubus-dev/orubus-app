@@ -162,7 +162,7 @@ object W {
         addView(IconView(c, icon, theme.ink), FrameLayout.LayoutParams(dp(c, 19), dp(c, 19), Gravity.CENTER))
     }
 
-    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND, WAVE, IMAGE, DOTS, RESEND }
+    enum class Icon { MENU, GEAR, CLOSE, BACK, SEND, WAVE, IMAGE, DOTS, RESEND, GLOBE }
 
     /** Hand-drawn icon — 2.1dp rounded ink strokes, centered, never squeezed. */
     class IconView(c: Context, private val icon: Icon, inkColor: Int) : View(c) {
@@ -250,6 +250,16 @@ object W {
                     m.lineTo(cx + s * 0.17f, cy + s * 0.02f)
                     m.lineTo(r.right - s * 0.04f, r.bottom - s * 0.05f)
                     canvas.drawPath(m, stroke)
+                }
+                Icon.GLOBE -> {
+                    // the browser/tools mark — a globe: circle + meridians
+                    val r = s * 0.32f
+                    canvas.drawCircle(cx, cy, r, stroke)
+                    canvas.drawLine(cx, cy - r, cx, cy + r, stroke)
+                    canvas.drawArc(android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 0f, 360f, false, stroke)
+                    val inner = r * 0.55f
+                    canvas.drawLine(cx - inner, cy - inner * 0.55f, cx + inner, cy - inner * 0.55f, stroke)
+                    canvas.drawLine(cx - inner, cy + inner * 0.55f, cx + inner, cy + inner * 0.55f, stroke)
                 }
                 Icon.DOTS -> {
                     // the "more" mark — three dots, vertical

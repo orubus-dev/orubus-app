@@ -90,7 +90,14 @@ object DuckEngine {
         .connectionPool(ConnectionPool(4, 5, TimeUnit.MINUTES))
         .build()
 
-    private fun Request.Builder.base(): Request.Builder {
+    /** The shared lane — the live surfaces (voice session, ice-servers) ride
+     *  the exact same pinned-IP client the chat rides. */
+    internal fun laneClient(): OkHttpClient = http
+
+    /** A pre-flavored request builder: UA/journey headers baked in. */
+    internal fun laneRequest(url: String): Request.Builder = Request.Builder().url(url).base()
+
+    internal fun Request.Builder.base(): Request.Builder {
         header("user-agent", UA)
         header("accept", "*/*")
         header("referer", "https://duck.ai/")
@@ -150,6 +157,19 @@ object DuckEngine {
 
     class Token(val header: String, val signals: String, val journey: String, val mintedAt: Long) {
         fun age(): Long = System.currentTimeMillis() - mintedAt
+    }
+
+    /**
+     * A fresh-or-fresh-enough token for the live lanes (the WebRTC voice
+     * session greets ice-servers + /session with the same x-vqd-hash-1 the
+     * chat carries). Blocking; call from a worker thread.
+     */
+    fun tokenForLive(): Token {
+        refreshFe()
+        val held = currentToken()
+        if (held != null && held.age() < TOKEN_TTL_MS) return held
+        clearToken()
+        return mint()
     }
 
     private const val TOKEN_TTL_MS = 5 * 60_000L // preemptive re-mint window; death retries cover the rest
@@ -344,5 +364,152 @@ object DuckEngine {
             add(if (mine) "user" else "assistant", text, if (mine && isLast) imageBase64 else null)
         }
         return arr
+    }
+
+    // ---------- the image lane ----------
+
+    class ImageGenResult(
+        val b64: String,
+        val w: Int,
+        val h: Int,
+        val format: String,
+        val model: String,
+        val text: String,
+    )
+
+    /**
+     * The native image lane: the SAME chat call with
+     * canDelegateImageGeneration turned on — the model delegates, the SSE
+     * stream carries `generate-image` ui-component events, the last one
+     * holds the finished picture as base64. Partial previews stream through
+     * `onPartial` while the real one cooks (progressive jpeg). Retries ride
+     * the same token ladder as chat.
+     */
+    fun chatImageGen(
+        prompt: String,
+        model: String,
+        timeoutMs: Int = 120_000,
+        onPartial: ((b64: String, w: Int, h: Int) -> Unit)? = null,
+    ): ImageGenResult {
+        refreshFe()
+        var last: Exception? = null
+        for (attempt in 0 until 3) {
+            if (attempt > 0) Thread.sleep(1200 + (Math.random() * 1500).toLong())
+            val held = currentToken()
+            val t: Token = if (held != null && held.age() < TOKEN_TTL_MS) held else {
+                clearToken()
+                try { mint() } catch (e: Exception) { last = e; null } ?: continue
+            }
+            try {
+                val r = imageOnce(t, prompt, model, timeoutMs, onPartial)
+                saveToken(t)
+                return r
+            } catch (e: DuckException) {
+                last = e
+                clearToken()
+                if (e.status in 400..599) feFetched = false
+                val retryable = e.status == 418 || e.status in 400..499 || e.status == 0 ||
+                    e.message?.startsWith("no-challenge") == true || e.message == "duck-empty" ||
+                    e.message?.startsWith("imggen:") == true
+                if (!retryable) throw e
+            } catch (e: IOException) {
+                last = e
+                if (!netUp()) throw NetworkDeadException("no lane — the device is offline")
+                pinnedDns.reset()
+            }
+        }
+        throw BusyException(last?.message ?: "the paint lane is catching its breath")
+    }
+
+    private fun imageOnce(
+        t: Token,
+        prompt: String,
+        model: String,
+        timeoutMs: Int,
+        onPartial: ((b64: String, w: Int, h: Int) -> Unit)?,
+    ): ImageGenResult {
+        val body = JSONObject().apply {
+            put("model", model)
+            put("messages", JSONArray().put(JSONObject().apply {
+                put("role", "user")
+                put("content", JSONArray().put(JSONObject().apply { put("type", "text"); put("text", prompt) }))
+            }))
+            put("canUseTools", false)
+            put("canDelegateImageGeneration", true)
+            put("reasoningEffort", "none")
+            put("canUseApproxLocation", JSONObject.NULL)
+            put("canShowGreeting", false)
+        }
+        val req = Request.Builder()
+            .url("https://duckduckgo.com/duckchat/v1/chat")
+            .base()
+            .header("accept", "text/event-stream")
+            .header("content-type", "application/json")
+            .header("x-vqd-hash-1", t.header)
+            .header("x-fe-signals", t.signals)
+            .header("x-fe-version", feVersion)
+            .header("x-duckai-response-id", UUID.randomUUID().toString())
+            .header("x-duckai-consent-purposes", "user-location,image-generation,web-search")
+            .header("x-duckai-tool-approval", "web-search,image-generation")
+            .header("x-ddg-journey-id", t.journey)
+            .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+        var finalB64 = ""
+        var w = 0
+        var h = 0
+        var format = "jpeg"
+        var modelName = ""
+        var text = ""
+        var genError = ""
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val err = try { resp.body?.string()?.take(120) ?: "" } catch (_: Exception) { "" }
+                throw DuckException(resp.code, "duck-${resp.code}:$err")
+            }
+            val src = resp.body?.source() ?: throw DuckException(0, "duck-empty")
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                val line = try { src.readUtf8Line() } catch (_: Exception) { null } ?: break
+                val l = line.trim()
+                if (!l.startsWith("data: ")) continue
+                val payload = l.substring(6)
+                if (payload == "[DONE]") break
+                if (payload.startsWith("[")) {
+                    if (payload.startsWith("[CHAT_TITLE:")) { /* the tab title — not the art */ }
+                    continue
+                }
+                try {
+                    val j = JSONObject(payload)
+                    if (j.has("message") && !j.isNull("message")) text += j.getString("message")
+                    if (j.optString("action", "") == "error") throw DuckException(0, "duck-sse:${j.optString("type", "err")}")
+                    if (j.optString("type", "") == "success" && j.optString("name", "") == "generate-image") {
+                        val d = j.optJSONObject("data") ?: continue
+                        when {
+                            d.optString("status", "") == "success" && d.optString("b64Image", "").length > 512 -> {
+                                finalB64 = d.getString("b64Image")
+                                w = d.optInt("width", 0); h = d.optInt("height", 0)
+                                format = d.optString("format", "jpeg")
+                                modelName = d.optString("imageModelDisplayName", "")
+                            }
+                            d.optString("type", "") == "image-partial" && d.optString("b64Image", "").length > 512 -> {
+                                try { onPartial?.invoke(d.getString("b64Image"), d.optInt("width", 0), d.optInt("height", 0)) } catch (_: Exception) {}
+                            }
+                            d.has("error") || d.optString("status", "") == "error" -> {
+                                genError = d.optString("error", "failed")
+                                throw DuckException(0, "imggen:$genError")
+                            }
+                        }
+                    }
+                } catch (e: DuckException) {
+                    throw e
+                } catch (_: Exception) {
+                    // partial JSON across chunk boundaries — next line completes it
+                }
+            }
+        }
+        if (finalB64.isBlank()) {
+            throw DuckException(0, if (genError.isNotBlank()) "imggen:$genError" else "imggen:no-image")
+        }
+        return ImageGenResult(finalB64, w, h, format, modelName, text.trim())
     }
 }

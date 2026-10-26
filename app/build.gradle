@@ -72,4 +72,8 @@ dependencies {
     // pinned IP for every duck.ai call (Dns pinning), HTTP/2 keep-alive.
     implementation 'com.google.android.gms:play-services-ads:23.6.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // WebRTC — the LIVE voice session (the native realtime call: mic up,
+    // assistant audio down, transcript data channel). stream-webrtc-android
+    // is Google's libwebrtc repacked for Maven Central.
+    implementation 'io.getstream:stream-webrtc-android:1.3.8'
 }

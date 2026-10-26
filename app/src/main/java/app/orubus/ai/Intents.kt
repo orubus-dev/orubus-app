@@ -16,7 +16,8 @@ object Intents {
 
     enum class Kind {
         SHOP, REQUESTS, INBOX, LEGAL, ABOUT, SETTINGS, NEWCHAT, CHATS,
-        UNITS, ID, REMEMBER, FORGET, SUMMARY, SOUL, DOWNLOAD, HELP, LOGOUT
+        UNITS, ID, REMEMBER, FORGET, SUMMARY, SOUL, DOWNLOAD, HELP, LOGOUT,
+        IMAGE, BROWSE, DEPLOY
     }
 
     data class Result(val kind: Kind, val arg: String = "", val serverCommand: String? = null)
@@ -39,6 +40,20 @@ object Intents {
         }
         if (has("summary", "summarize", "catch me up", "recap") && !has("what")) return Result(Kind.SUMMARY, "", "/summary")
         if (has("soul") && (has("my", "read", "know about me", "what do you know"))) return Result(Kind.SOUL, "", "/soul")
+
+        // the v3.7.0 hands — paint / browse / deploy
+        Regex("^\\s*(?:draw|paint|generate|create|make)\\s+(?:me\\s+)?(?:an?\\s+|the\\s+)?(?:image|picture|photo|art|pic|drawing|painting)\\s*(?:of|showing|with|about|:|,|-|—)?\\s*(.{3,300})$").find(text)?.let {
+            return Result(Kind.IMAGE, it.groupValues[1].trim())
+        }
+        Regex("^\\s*(?:browse|go to|visit|open)\\s+((?:https?://|www\\.)\\S+)$").find(text)?.let {
+            return Result(Kind.BROWSE, it.groupValues[1].trim())
+        }
+        Regex("^\\s*browse\\s+(?:and\\s+)?(.{3,200})$").find(text)?.let {
+            if (has("browse")) return Result(Kind.BROWSE, it.groupValues[1].trim())
+        }
+        if (Regex("^\\s*(?:deploy|publish|ship)\\s+(?:my |the )?(site|website|page|webpage)").containsMatchIn(text)) {
+            return Result(Kind.DEPLOY, "")
+        }
 
         // surfaces
         if (has("shop", "store", "buy su", "buy units", "buy packs", "su packs", "top up", "pro pass", "themes")) return Result(Kind.SHOP)

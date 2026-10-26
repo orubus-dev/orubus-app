@@ -24,7 +24,7 @@ object Store {
     fun prefs() = AppCtx.get().getSharedPreferences("orubus", android.content.Context.MODE_PRIVATE)
 
     // ---------- chats ----------
-    data class Msg(val mine: Boolean, val text: String, val at: Long, val system: Boolean = false, val think: String = "", val img: String = "")
+    data class Msg(val mine: Boolean, val text: String, val at: Long, val system: Boolean = false, val think: String = "", val img: String = "", val site: String = "")
     data class Chat(val id: String, var name: String, val created: Long, val msgs: MutableList<Msg>)
 
     @Volatile private var cache: MutableList<Chat>? = null
@@ -64,7 +64,7 @@ object Store {
                     val ma = o.optJSONArray("msgs") ?: JSONArray()
                     for (k in 0 until ma.length()) {
                         val m = ma.getJSONObject(k)
-                        msgs.add(Msg(m.optBoolean("mine"), m.optString("text", ""), m.optLong("at"), m.optBoolean("system"), m.optString("think", ""), m.optString("img", "")))
+                        msgs.add(Msg(m.optBoolean("mine"), m.optString("text", ""), m.optLong("at"), m.optBoolean("system"), m.optString("think", ""), m.optString("img", ""), m.optString("site", "")))
                     }
                     list.add(Chat(o.optString("id", UUID()), o.optString("name", "New chat"), o.optLong("created"), msgs))
                 }
@@ -87,7 +87,7 @@ object Store {
                 o.put("created", c.created)
                 val ma = JSONArray()
                 for (m in c.msgs.takeLast(200)) {
-                    ma.put(JSONObject().put("mine", m.mine).put("text", m.text).put("at", m.at).put("system", m.system).put("think", m.think).put("img", m.img))
+                    ma.put(JSONObject().put("mine", m.mine).put("text", m.text).put("at", m.at).put("system", m.system).put("think", m.think).put("img", m.img).put("site", m.site))
                 }
                 o.put("msgs", ma)
                 arr.put(o)
@@ -222,8 +222,8 @@ object Store {
         save()
     }
 
-    fun append(chat: Chat, mine: Boolean, text: String, system: Boolean = false, think: String = "", img: String = ""): Msg {
-        val m = Msg(mine, text, System.currentTimeMillis(), system, think, img)
+    fun append(chat: Chat, mine: Boolean, text: String, system: Boolean = false, think: String = "", img: String = "", site: String = ""): Msg {
+        val m = Msg(mine, text, System.currentTimeMillis(), system, think, img, site)
         chat.msgs.add(m)
         // auto-name a fresh chat from its first user message
         if (chat.name == "New chat" && mine && !system && text.isNotBlank()) chat.name = text.take(24)

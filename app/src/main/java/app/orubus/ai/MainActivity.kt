@@ -48,6 +48,15 @@ import org.json.JSONObject
  * Ads go fully server-sided: unit ids arrive at load time from our backend
  * (signed-build attestation), App Open ads ride the return with a 4h cap,
  * Firebase Analytics streams the console numbers.
+ *
+ * v3.7.0 — the hands: the AI paints (native image lane, 100 SU, partials
+ * stream into the bubble), browses ON THIS SCREEN (agent-driven WebView the
+ * user watches live, with a take-the-wheel pause), speaks LIVE (WebRTC
+ * realtime session — real barge-in, the lane's own voice, legacy call as
+ * fallback), keeps a Keystore-encrypted toolbox (files the AI creates,
+ * reads and deploys), builds + deploys websites (the URL lands on the
+ * message as a "View generated website" button), and speaks MCP (paste a
+ * connector link, verify, its tools join the chat contract).
  */
 class MainActivity : Activity() {
 
@@ -473,6 +482,11 @@ class MainActivity : Activity() {
         attachBtn!!.setOnClickListener { pickImage() }
         sendrow.addView(attachBtn, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(7) })
 
+        // the hands — paint, browse, toolbox, connectors
+        val toolsBtn = W.iconBtn(this, W.Icon.GLOBE, W.theme.paper)
+        toolsBtn.setOnClickListener { openToolsMenu(toolsBtn) }
+        sendrow.addView(toolsBtn, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(7) })
+
         chatInput = EditText(this).apply {
             hint = "Message Orubus…"; textSize = 14.5f; maxLines = 4
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
@@ -773,6 +787,8 @@ class MainActivity : Activity() {
                 when {
                     m.system -> pushSys(m.text)
                     m.mine -> pushUser(m.text, m.img)
+                    m.site.isNotBlank() -> pushBotSite(m.text, m.site)
+                    m.img.isNotBlank() -> pushBotImage(m.text, m.img)
                     else -> pushBot(m.text, m.think)
                 }
             }
@@ -841,7 +857,7 @@ class MainActivity : Activity() {
     }
 
     /** The menu card itself — house style, pinned to the touch point. */
-    private fun showFingerMenu(anchor: View, rawX: Float, rawY: Float, items: List<Triple<String, Boolean, () -> Unit>>) {
+    internal fun showFingerMenu(anchor: View, rawX: Float, rawY: Float, items: List<Triple<String, Boolean, () -> Unit>>) {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         for ((label, danger, action) in items) {
             val row = TextView(this).apply {
@@ -1065,6 +1081,30 @@ class MainActivity : Activity() {
                 }
 
                 if (answer == null) {
+                    // the hands — MCP connectors + the encrypted toolbox speak
+                    // the same one-line tool contract; the loop is capped and
+                    // every hop narrates on the typing row
+                    if (linked && imgBase64 == null && (ToolRig.available() || Toolbox.list().isNotEmpty())) {
+                        try {
+                            answer = ToolRig.toolLoop(chat, text, prelude, DuckEngine.modelFor(tier), { step ->
+                                runOnUiThread {
+                                    if (dots != null) (dots.findViewWithTag("cap") as? TextView)?.text = " $step"
+                                }
+                            }, { n, url ->
+                                runOnUiThread {
+                                    pushBotSite("your site is live ⚡", url)
+                                    Store.append(chat, false, "your site is live ⚡", site = url)
+                                }
+                            })
+                        } catch (de: DuckEngine.NetworkDeadException) {
+                            throw de
+                        } catch (_: Exception) {
+                            answer = null // the plain lane takes it from here
+                        }
+                    }
+                }
+
+                if (answer == null) {
                     val turns = Store.turnsOf(chat)
                     val pre = prelude.ifBlank { "You are Orubus — a sharp, warm, slightly playful AI companion. Keep replies tight and human." }
                     val msgs = DuckEngine.buildMessages(pre, turns, imgBase64)
@@ -1262,8 +1302,16 @@ class MainActivity : Activity() {
             }
             Intents.Kind.REMEMBER, Intents.Kind.FORGET, Intents.Kind.SUMMARY, Intents.Kind.SOUL -> serverCommand(r.serverCommand ?: return)
             Intents.Kind.DOWNLOAD -> pushSys("you're holding it — this IS the app. share it: ${Api.APK_URL}")
-            Intents.Kind.HELP -> pushSys("try: \"open shop\" · \"new chat\" · \"how many credits\" · \"remember my name is …\" · \"catch me up\" · \"inbox\" · or just talk — I'm all ears")
+            Intents.Kind.HELP -> pushSys("try: \"draw an image of …\" · \"browse https://…\" · \"build me a site and deploy it\" · \"open shop\" · \"new chat\" · \"how many credits\" · \"remember my name is …\" · or just talk — I'm all ears")
             Intents.Kind.LOGOUT -> confirmLogout()
+            Intents.Kind.IMAGE -> startImageGen(r.arg.ifBlank { "a small orange cat, sticker style" })
+            Intents.Kind.BROWSE -> {
+                val arg = r.arg.trim()
+                val isUrl = arg.startsWith("http") || arg.startsWith("www.")
+                if (isUrl) startAgentBrowse("browse ${arg.take(80)} and tell me what's there", arg)
+                else startAgentBrowse(arg, "")
+            }
+            Intents.Kind.DEPLOY -> openToolboxSheet()
         }
     }
 
@@ -1374,6 +1422,77 @@ class MainActivity : Activity() {
                 }
             }
         }.start()
+    }
+
+    // ---------- the hands: composer tools menu + the site card ----------
+
+    /** The ＋ lane: paint, browse, toolbox, connectors — one menu. */
+    internal fun openToolsMenu(anchor: View) {
+        val loc = IntArray(2)
+        anchor.getLocationOnScreen(loc)
+        val items = mutableListOf<Triple<String, Boolean, () -> Unit>>(
+            Triple("🎨  Generate image", false) { openImageGenSheet() },
+            Triple("🌐  Browse with me", false) { openBrowseDialog() },
+            Triple("🧰  Toolbox", false) { openToolboxSheet() },
+            Triple("🔗  Connectors", false) { openConnectorsSheet() },
+        )
+        showFingerMenu(anchor, loc[0] + anchor.width / 2f, loc[1] + anchor.height / 2f, items)
+    }
+
+    /** The browse brief: what to do out there, and where to start. */
+    internal fun openBrowseDialog() {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), 0) }
+        fun field(hint: String, multi: Boolean = false): EditText = EditText(this).apply {
+            this.hint = hint
+            textSize = 14f
+            maxLines = if (multi) 3 else 1
+            setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
+            typeface = W.regular(this@openBrowseDialog)
+            background = W.stroke(this@openBrowseDialog, W.theme.paper, 12)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        val goal = field("what should I do out there?", multi = true)
+        val url = field("start from (optional) https://…")
+        box.addView(goal)
+        box.addView(url, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        orubusDialog(
+            "Browse with me",
+            "I'll drive a real browser right on this screen — you watch every step and can take the wheel anytime.",
+            "GO", "CANCEL",
+            bodyView = box,
+            onPositive = {
+                val g = goal.text.toString().trim()
+                if (g.isNotBlank()) startAgentBrowse(g, url.text.toString().trim())
+            }
+        )
+    }
+
+    /** The deployed-site card — the "View generated website" button. */
+    internal fun pushBotSite(text: String, site: String) {
+        hideHello()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (text.isNotBlank()) col.addView(bubble(text, "a"))
+        val url = site.trim()
+        val name = try { java.net.URI(url).host?.removePrefix("www.") ?: url } catch (_: Exception) { url }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = W.shadowed(this@pushBotSite, W.theme.paper, 12, 2)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        card.addView(W.label(this, "🧱 $name", 14f, W.theme.ink, heavy = 2))
+        card.addView(W.label(this, url, 11f, W.theme.dim).apply {
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(0, dp(2), 0, dp(7))
+        })
+        card.addView(W.button(this, "VIEW GENERATED WEBSITE", W.theme.acc, W.theme.ink, radiusDp = 10, small = true).apply {
+            setOnClickListener {
+                try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) {
+                    Toast.makeText(this@pushBotSite, "no browser opened — the link is $url", Toast.LENGTH_LONG).show()
+                }
+            }
+        })
+        col.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) })
+        chatList?.addView(col, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        scrollEnd()
     }
 
     // ---------- drawer: chats on top, name + credits at the foot ----------
@@ -1569,6 +1688,8 @@ class MainActivity : Activity() {
 
         rows.addView(item("🛍", "SHOP", "packs · pro · themes") { toggleSettings(false); openDetail("shop") })
         rows.addView(item("⚡", "EARN & REDEEM", "watch an ad · daily tasks · codes") { toggleSettings(false); toggleSheet(true) })
+        rows.addView(item("🔗", "CONNECTORS", "paste an MCP link — verify — the AI uses it") { toggleSettings(false); openConnectorsSheet() })
+        rows.addView(item("🧰", "TOOLBOX", "the AI's encrypted workspace + sites") { toggleSettings(false); openToolboxSheet() })
         rows.addView(item("🗳", "REQUESTS", "the feature wall") { toggleSettings(false); openDetail("requests") })
         rows.addView(item("📥", "INBOX", "from the admin", withDot = true) { toggleSettings(false); openDetail("inbox") })
         rows.addView(item("⚖", "LEGAL", "terms · privacy") { toggleSettings(false); openDetail("legal") })

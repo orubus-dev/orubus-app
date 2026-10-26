@@ -185,6 +185,44 @@ object Api {
         post("voicecall", mapOf("secs" to secs))
     } catch (_: Exception) { null }
 
+    // ---------- image generation (the native paint lane) ----------
+
+    /**
+     * appgen — spend the paint price (imageGenCost, 100 SU) and mint a
+     * single-use paint token. The device lane does the painting; appdone
+     * closes the token, appfail refunds it whole.
+     */
+    fun appGen(prompt: String): TurnSpend = try {
+        val r = post("appgen", mapOf("prompt" to prompt))
+        if (r.optBoolean("ok", false)) {
+            TurnSpend(true, r.optString("token"), r.optInt("cost", 0), "", r.optJSONObject("wallet"))
+        } else {
+            TurnSpend(false, "", 0, r.optString("error", "couldn't spend units"), r.optJSONObject("wallet"))
+        }
+    } catch (e: Exception) {
+        TurnSpend(false, "", 0, if (isNetErr(e)) "no connection right now — try again when you're back online" else "couldn't reach the paint desk", null)
+    }
+
+    /**
+     * appgenimg — the server's own paint lane as the fallback: the SAME
+     * token, our egress finishes the picture when the phone's lane slipped.
+     * Burns the token; a slipped server lane refunds inside the response.
+     */
+    fun appGenImg(token: String, prompt: String): JSONObject? = try {
+        post("appgenimg", mapOf("token" to token, "prompt" to prompt))
+    } catch (_: Exception) { null }
+
+    /**
+     * appsite — the user's own website, deployed. op=deploy {name, html} →
+     * {ok, url}; op=delete {id}; op=list. The URL lands on the message as
+     * the "View generated website" button.
+     */
+    fun appSite(op: String, extra: Map<String, Any?> = emptyMap()): JSONObject = try {
+        post("appsite", mapOf("op" to op) + extra)
+    } catch (e: Exception) {
+        JSONObject().put("ok", false).put("error", if (isNetErr(e)) "no connection right now — try again when you're back online" else "the deploy desk is unreachable")
+    }
+
     /** appdone: archive the answer + close the token. Fail-soft (history only). */
     fun appDone(token: String, answer: String): JSONObject? = try {
         post("appdone", mapOf("token" to token, "answer" to answer))

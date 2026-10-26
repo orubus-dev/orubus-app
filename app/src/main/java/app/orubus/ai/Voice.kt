@@ -51,11 +51,18 @@ internal fun MainActivity.startVoiceCall() {
         }
         return
     }
-    if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-        pushSys("voice isn't available on this device — the keyboard mic still works everywhere")
-        return
+    // LIVE first — the native realtime session (real barge-in, the lane's own
+    // voice). Any rung that fails lands here with a human line, and the
+    // classic on-device call takes over without a beat.
+    try {
+        startLiveCall { err ->
+            pushSys("live: $err — the classic call takes over")
+            buildCall()
+        }
+    } catch (_: Throwable) {
+        // webrtc missing on this device — never crash the button
+        buildCall()
     }
-    buildCall()
 }
 
 internal fun MainActivity.onMicPermission(granted: Boolean) {
