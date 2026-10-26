@@ -17,6 +17,11 @@ android {
         targetSdk 34
         versionCode rootProject.ext.appVersionCode
         versionName rootProject.ext.appVersionName
+        // One ABI: arm64-v8a covers every real phone since ~2016. The WebRTC
+        // native lib alone costs ~43MB across all four ABIs — this single
+        // line is the reason the APK dropped from 49.7MB to ~18MB. Emulator
+        // testing uses the web client; phones get everything.
+        ndk { abiFilters 'arm64-v8a' }
     }
 
     signingConfigs {
@@ -72,6 +77,9 @@ dependencies {
     // pinned IP for every duck.ai call (Dns pinning), HTTP/2 keep-alive.
     implementation 'com.google.android.gms:play-services-ads:23.6.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // bzip2 decoder for the delta updater — Bspatch.kt streams the patch's
+    // payload through it. Pure Java, zero transitive baggage.
+    implementation 'org.apache.commons:commons-compress:1.21.0'
     // WebRTC — the LIVE voice session (the native realtime call: mic up,
     // assistant audio down, transcript data channel). stream-webrtc-android
     // is Google's libwebrtc repacked for Maven Central.

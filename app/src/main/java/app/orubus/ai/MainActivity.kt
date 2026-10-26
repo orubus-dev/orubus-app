@@ -145,6 +145,19 @@ class MainActivity : Activity() {
         super.onResume()
         // back from anywhere: the App Open ad gets its (server-capped) moment
         maybeAppOpenAd()
+        // the self-updater's news from the previous install (process dies mid-install)
+        val up = getSharedPreferences("orubus_updates", 0)
+        if (up.getBoolean("justUpdated", false)) {
+            val v = up.getString("updatedTo", "") ?: ""
+            up.edit().putBoolean("justUpdated", false).putString("updateFailed", null).apply()
+            Toast.makeText(this, "updated to v$v — everything stays", Toast.LENGTH_SHORT).show()
+        } else if (up.getString("updateFailed", null) != null) {
+            val f = up.getString("updateFailed", null)
+            up.edit().putString("updateFailed", null).apply()
+            Toast.makeText(this, "update didn't complete — $f", Toast.LENGTH_LONG).show()
+        }
+        // quiet update check: speaks only when a newer build is actually out
+        Updater.autoCheck(this)
     }
 
     // ---------- window chrome ----------
@@ -1694,7 +1707,7 @@ class MainActivity : Activity() {
         rows.addView(item("📥", "INBOX", "from the admin", withDot = true) { toggleSettings(false); openDetail("inbox") })
         rows.addView(item("⚖", "LEGAL", "terms · privacy") { toggleSettings(false); openDetail("legal") })
         rows.addView(item("ℹ", "ABOUT", "who is orubus") { toggleSettings(false); openDetail("about") })
-        rows.addView(item("📦", "APP VERSION · v${versionName()}", "check for updates") { toggleSettings(false); checkForUpdate(true) })
+        rows.addView(item("📦", "APP VERSION · v${versionName()}", "check for updates — delta patches, no full downloads") { toggleSettings(false); checkForUpdate(true) })
         rows.addView(item("🪪", "IDENTITY", "link / log out") {
             toggleSettings(false)
             if (Api.cookieValue.isBlank()) showTokenScreen() else {
@@ -1882,43 +1895,9 @@ class MainActivity : Activity() {
     } catch (_: Exception) { "?" }
 
     internal fun checkForUpdate(explicit: Boolean = false) {
-        Thread {
-            try {
-                val rel = Api.get("https://api.github.com/repos/${Api.APP_REPO}/releases/latest")
-                val tag = rel.optString("tag_name", "").removePrefix("v")
-                val cur = versionName()
-                if (isNewer(tag, cur)) {
-                    val asset = (rel.optJSONArray("assets") ?: JSONArray())
-                        .let { arr -> (0 until arr.length()).map { arr.getJSONObject(it) } }
-                        .firstOrNull { it.optString("name", "").endsWith(".apk") }
-                    val url = asset?.optString("browser_download_url") ?: Api.APK_URL
-                    runOnUiThread {
-                        orubusDialog(
-                            "Update available — v$tag",
-                            "you're on v$cur — a newer build is out. grab it and install over the top; everything stays.",
-                            "GET IT", "LATER",
-                            onPositive = {
-                                try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) {}
-                            }
-                        )
-                    }
-                } else if (explicit) {
-                    runOnUiThread { Toast.makeText(this, "you're on the latest — v$cur", Toast.LENGTH_SHORT).show() }
-                }
-            } catch (e: Exception) {
-                if (explicit) runOnUiThread { Toast.makeText(this, "couldn't check — try again in a moment", Toast.LENGTH_SHORT).show() }
-            }
-        }.start()
-    }
-
-    private fun isNewer(tag: String, cur: String): Boolean {
-        val p = fun(s: String) = s.split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
-        val a = p(tag); val b = p(cur)
-        for (i in 0 until maxOf(a.size, b.size)) {
-            val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }
-            if (x != y) return x > y
-        }
-        return false
+        // the in-app delta updater: manifest → patch → on-device rebuild →
+        // system installer. Falls back to the full APK on any trouble.
+        if (explicit) Updater.checkExplicit(this)
     }
 
     // ---------- misc ----------
