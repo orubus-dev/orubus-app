@@ -748,7 +748,7 @@ class MainActivity : Activity() {
 
     internal fun removeView(v: View?) { if (v != null) chatList?.removeView(v) }
 
-    private fun scrollEnd() {
+    internal fun scrollEnd() {
         chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
     }
 
@@ -768,7 +768,7 @@ class MainActivity : Activity() {
         return box
     }
 
-    private fun hideHello() {
+    internal fun hideHello() {
         val l = chatList ?: return
         if (l.tag == "hello") { l.tag = null; l.removeAllViews() }
     }
@@ -1447,8 +1447,8 @@ class MainActivity : Activity() {
             textSize = 14f
             maxLines = if (multi) 3 else 1
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
-            typeface = W.regular(this@openBrowseDialog)
-            background = W.stroke(this@openBrowseDialog, W.theme.paper, 12)
+            typeface = W.regular(this)
+            background = W.stroke(this, W.theme.paper, 12)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         val goal = field("what should I do out there?", multi = true)
@@ -1476,7 +1476,7 @@ class MainActivity : Activity() {
         val name = try { java.net.URI(url).host?.removePrefix("www.") ?: url } catch (_: Exception) { url }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = W.shadowed(this@pushBotSite, W.theme.paper, 12, 2)
+            background = W.shadowed(this, W.theme.paper, 12, 2)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         card.addView(W.label(this, "🧱 $name", 14f, W.theme.ink, heavy = 2))
@@ -1486,7 +1486,7 @@ class MainActivity : Activity() {
         card.addView(W.button(this, "VIEW GENERATED WEBSITE", W.theme.acc, W.theme.ink, radiusDp = 10, small = true).apply {
             setOnClickListener {
                 try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) {
-                    Toast.makeText(this@pushBotSite, "no browser opened — the link is $url", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "no browser opened — the link is $url", Toast.LENGTH_LONG).show()
                 }
             }
         })

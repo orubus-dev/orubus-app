@@ -18,12 +18,12 @@ import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
-import org.webrtc.JavaAudioDeviceModule
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -224,7 +224,7 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
 
             val f = Live.ensureFactory()
             val rtcConfig = PeerConnection.RTCConfiguration(Live.iceServers(token)).apply {
-                iceTransportPolicy = PeerConnection.IceTransportsPolicy.RELAY
+                iceTransportsPolicy = PeerConnection.IceTransportsPolicy.RELAY
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             }
             val dcOpen = CountDownLatch(1)
@@ -243,7 +243,6 @@ internal fun MainActivity.startLiveCall(onFail: (String) -> Unit) {
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
                 override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-                override fun onIceCandidatesError(event: org.webrtc.IceCandidateErrorEvent) {}
                 override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
                     if (state == PeerConnection.PeerConnectionState.FAILED) finish("the live lane dropped")
                 }

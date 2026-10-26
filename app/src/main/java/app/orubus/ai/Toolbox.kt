@@ -131,7 +131,7 @@ object Toolbox {
         val arr = m.optJSONArray("files") ?: JSONArray()
         val found = (0 until arr.length()).firstOrNull { arr.getJSONObject(it).optString("name") == n }
         val entry = JSONObject().put("name", n).put("size", bytes.size).put("ts", System.currentTimeMillis())
-        if (found >= 0) arr.put(found, entry) else arr.put(entry)
+        if (found != null) arr.put(found, entry) else arr.put(entry)
         m.put("files", arr)
         saveMeta(m)
         return n
@@ -209,10 +209,11 @@ object Toolbox {
         return name to r.optString("url", "")
     }
 
-    // ---------- the sheet ----------
+    // ---------- the sheet lives at file scope (top-level extension) ----------
+}
 
-    @SuppressLint("SetTextI18n")
-    internal fun MainActivity.openToolboxSheet() {
+@SuppressLint("SetTextI18n")
+internal fun MainActivity.openToolboxSheet() {
         val scrim = View(this).apply { setBackgroundColor(Color.argb(90, 20, 20, 20)) }
         screen.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -241,9 +242,9 @@ object Toolbox {
         scroll.addView(list)
         panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) })
 
-        val used = list().sumOf { it.second }
+        val used = Toolbox.list().sumOf { it.second }
         panel.addView(
-            W.label(this, "${list().size} files · ${(used / 1000.0).toInt()} KB of 2 MB encrypted", 11f, W.theme.dim).apply { setPadding(dp(4), dp(6), 0, 0) },
+            W.label(this, "${Toolbox.list().size} files · ${(used / 1000.0).toInt()} KB of 2 MB encrypted", 11f, W.theme.dim).apply { setPadding(dp(4), dp(6), 0, 0) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
 
@@ -256,7 +257,7 @@ object Toolbox {
 
         fun render() {
             list.removeAllViews()
-            val files = list()
+            val files = Toolbox.list()
             if (files.isEmpty()) {
                 list.addView(W.label(this, "empty for now.\nask the AI in chat — \"build me a pricing page and deploy it\" — and watch the toolbox fill up.", 12.5f, W.theme.dim).apply {
                     setPadding(dp(4), dp(10), dp(4), dp(4)); setLineSpacing(dp(2).toFloat(), 1f)
@@ -266,7 +267,7 @@ object Toolbox {
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    background = W.shadowed(this@openToolboxSheet, W.theme.paper, 12, 2)
+                    background = W.shadowed(this, W.theme.paper, 12, 2)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     W.press(this)
                 }
@@ -276,7 +277,7 @@ object Toolbox {
                 card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 card.setOnClickListener {
                     try {
-                        val content = readFile(name)
+                        val content = Toolbox.readFile(name)
                         orubusDialog(name, content.take(1800) + if (content.length > 1800) "\n…" else "", "CLOSE")
                     } catch (e: Exception) {
                         pushSys(e.message ?: "couldn't open it")
@@ -285,14 +286,14 @@ object Toolbox {
                 card.setOnLongClickListener {
                     val items = mutableListOf<Triple<String, Boolean, () -> Unit>>(
                         Triple("Copy contents", false) {
-                            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            cm.setPrimaryClip(android.content.ClipData.newPlainText("orubus-toolbox", try { readFile(name) } catch (_: Exception) { "" }))
+                            val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("orubus-toolbox", try { Toolbox.readFile(name) } catch (_: Exception) { "" }))
                             Toast.makeText(this, "copied ⚡", Toast.LENGTH_SHORT).show()
                         },
                         Triple("Deploy as site", false) {
                             Thread {
                                 try {
-                                    val (n, url) = deploySite(name)
+                                    val (n, url) = Toolbox.deploySite(name)
                                     runOnUiThread {
                                         pushSys("🚀 deployed — $url")
                                         Store.append(Store.currentChat(), false, "🚀 deployed \"$n\"", site = url)
@@ -304,7 +305,7 @@ object Toolbox {
                             }.start()
                         },
                         Triple("Delete", true) {
-                            deleteFile(name); render()
+                            Toolbox.deleteFile(name); render()
                         },
                     )
                     showFingerMenu(card, resources.displayMetrics.widthPixels / 2f, resources.displayMetrics.heightPixels / 3f, items)
@@ -317,6 +318,5 @@ object Toolbox {
 
         screen.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h).apply { gravity = Gravity.BOTTOM })
         panel.translationY = h.toFloat()
-        panel.animate().translationY(0f).setDuration(230).setInterpolator(DecelerateInterpolator()).start()
-    }
+        panel.animate().translationY(0f).setDuration(230).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
 }
