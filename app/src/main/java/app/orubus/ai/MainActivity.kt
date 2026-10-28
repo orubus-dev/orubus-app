@@ -62,6 +62,7 @@ class MainActivity : Activity() {
 
     internal lateinit var screen: FrameLayout
     internal lateinit var page: LinearLayout
+    internal var updateOverlay: FrameLayout? = null // the updater's full stage
 
     // ---- header ----
     internal var meterChip: TextView? = null
@@ -182,6 +183,7 @@ class MainActivity : Activity() {
             val v = up.getString("updatedTo", "") ?: ""
             up.edit().putBoolean("justUpdated", false).putString("updateFailed", null).apply()
             Toast.makeText(this, "updated to v$v — everything stays", Toast.LENGTH_SHORT).show()
+            Updater.wipe(this) // the previous code's update dir has no business surviving
         } else if (up.getString("updateFailed", null) != null) {
             val f = up.getString("updateFailed", null)
             up.edit().putString("updateFailed", null).apply()
@@ -223,8 +225,11 @@ class MainActivity : Activity() {
         }
         val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         scroll.addView(text)
-        val holder = FrameLayout(this).apply { setPadding(dp(4), dp(2), dp(4), 0) }
-        holder.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)))
+        val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(2), dp(4), 0) }
+        holder.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)))
+        holder.addView(W.label(this, "continuing means you agree to follow Orubus AI's legal terms.", 12.5f, W.theme.acc2, heavy = 1).apply {
+            setPadding(dp(2), dp(8), dp(2), dp(2))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         orubusDialog(
             "Before you come in",
             "",
@@ -291,6 +296,17 @@ class MainActivity : Activity() {
         later.gravity = Gravity.CENTER
         later.setPadding(0, dp(16), 0, 0)
 
+        // one tap into the bot — the t.me deep link opens Telegram straight
+        // at @orubus_bot when installed, else the browser takes it
+        val tg = W.button(this, "OPEN TELEGRAM · @orubus_bot", W.theme.acc, W.theme.ink, radiusDp = 12)
+        tg.setOnClickListener {
+            try {
+                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/orubus_bot")))
+            } catch (_: Exception) {
+                status.text = "no Telegram or browser here — the bot is @orubus_bot"
+            }
+        }
+
         fun goLink() {
             val code = input.text.toString().trim().uppercase(java.util.Locale.US)
             if (code.length < 6) { status.text = "the code looks short — it's GENJ-XXXX"; return }
@@ -321,6 +337,7 @@ class MainActivity : Activity() {
         box.addView(logoRow)
         box.addView(title)
         box.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(tg, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
         box.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
         box.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
         box.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -1990,6 +2007,7 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            updateOverlay != null -> UpdateScreen.close(this) // the work continues behind the app
             imageViewer != null -> {
                 imageViewer?.let { screen.removeView(it) }
                 imageViewer = null

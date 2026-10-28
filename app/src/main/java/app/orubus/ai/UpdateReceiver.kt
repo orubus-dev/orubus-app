@@ -26,6 +26,7 @@ class UpdateReceiver : BroadcastReceiver() {
                 }
             }
             PackageInstaller.STATUS_SUCCESS -> {
+                Updater.wipe(context) // the new build is in — the old update artifacts are dead weight
                 prefs.edit()
                     .putBoolean("justUpdated", true)
                     .putString("updatedTo", Updater.installedName())
