@@ -1,13 +1,13 @@
 package app.orubus.ai
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
