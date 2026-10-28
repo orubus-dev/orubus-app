@@ -1,32 +1,28 @@
 {
  "v": 1,
  "latest": {
-  "code": 11,
-  "name": "3.7.3",
-  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3/Orubus.apk",
-  "sha256": "ca36e27fd9238dbb95a75e55fc6c3f75472e6e8409e84ba953d1029a450692ff",
-  "size": 18356730,
+  "code": 12,
+  "name": "3.7.3.1",
+  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3.1/Orubus.apk",
+  "sha256": "977665a8b441421a8d41a265d88711d6fdf5afdfbd2b7f8f7a26815e43ed0f57",
+  "size": 18373118,
   "components": [
    "core app",
-   "the voice lane",
-   "the paint lane",
-   "the browser",
-   "the toolbox"
+   "the setup flow",
+   "the updater"
   ],
-  "notes": "the voice button can no longer take the app down with it (every trip now lands as the classic call, and a crash gets logged + explained on the next launch), calls bill 1 SU per 4 seconds in exact blocks, Brainwash v5 (the voice mask rides the session, provider slips get scrubbed before they archive), every tool now opens as a real popup with its workspace and result inside (paint even shows the art with save/share/edit), long-press any generated image for fullscreen/save/share/edit, chat with the browser in plain text while it drives, and instance sites: name + brief -> live site at a pretty link."
+  "notes": "the setup screen gained OPEN TELEGRAM - one tap straight into @orubus_bot - and the continuing-means-you-agree-to-the-terms line; the updater got its own screen: live download percentage, resumable/idempotent work (close it, kill the app, come back - it picks up from the exact byte it stopped), the delta patch rebuilds on device and is byte-verified before install, and RETRY never starts from zero."
  },
  "deltas": {
-  "10": {
-   "to": 11,
-   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3/Orubus-10to11.bsdiff",
-   "sha256": "8e6c8f0d2e2294afebf4ea7da5976a36d1ca91d222001ff9ec2e50b3044c0bb2",
-   "size": 3191975,
+  "11": {
+   "to": 12,
+   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3.1/Orubus-11to12.bsdiff",
+   "sha256": "9f94ebac5c599784e9ca2af7edf3505b8c41a6973a44386df0ab8daaf0f20fa6",
+   "size": 3205754,
    "components": [
     "core app",
-    "the voice lane",
-    "the paint lane",
-    "the browser",
-    "the toolbox"
+    "the setup flow",
+    "the updater"
    ]
   }
  }
