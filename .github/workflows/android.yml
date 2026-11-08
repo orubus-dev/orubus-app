@@ -31,10 +31,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle 8.7
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+      - name: Set up Gradle 8.7 (direct download, retries)
+        run: |
+          for i in 1 2 3 4 5; do
+            if wget -q -c https://services.gradle.org/distributions/gradle-8.7-bin.zip -O /tmp/gradle.zip; then break; fi
+            echo "download attempt $i failed — retrying"; sleep 15
+          done
+          test -s /tmp/gradle.zip || { echo "::error::gradle download failed after retries"; exit 1; }
+          unzip -q -o /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
 
       - name: Read version
         id: ver
