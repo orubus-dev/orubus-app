@@ -362,16 +362,17 @@ class MainActivity : Activity() {
      * once; ⚙ → REGISTER reopens it any time.
      */
     internal fun showProfileSheet(after: (() -> Unit)? = null) {
+        val act = this
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(4), 0, 0)
         }
-        fun field(hint: String): EditText = EditText(this).apply {
+        fun field(hint: String): EditText = EditText(act).apply {
             this.hint = hint; maxLines = 1; textSize = 15f
             setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
-            typeface = W.medium(this@showProfileSheet)
-            background = W.stroke(this@showProfileSheet, W.theme.paper, 10)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            typeface = W.medium(act)
+            background = W.stroke(act, W.theme.paper, 10)
+            setPadding(act.dp(14), act.dp(12), act.dp(14), act.dp(12))
         }
         val nameIn = field("your name (what do I call you?)")
         val userIn = field("your handle — letters, numbers, _")
