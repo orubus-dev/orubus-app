@@ -31,13 +31,24 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle 8.7 (direct download, retries)
+      - name: Set up Gradle 8.7 (mirrors + retries)
         run: |
-          for i in 1 2 3 4 5; do
-            if wget -q -c https://services.gradle.org/distributions/gradle-8.7-bin.zip -O /tmp/gradle.zip; then break; fi
-            echo "download attempt $i failed — retrying"; sleep 15
+          MIRRORS=(
+            "https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip"
+            "https://mirror.nju.edu.cn/gradle/gradle-8.7-bin.zip"
+            "https://services.gradle.org/distributions/gradle-8.7-bin.zip"
+          )
+          ok=""
+          for round in 1 2 3; do
+            for m in "${MIRRORS[@]}"; do
+              echo "attempt: $m"
+              if wget -q -c --timeout=25 "$m" -O /tmp/gradle.zip && [ -s /tmp/gradle.zip ]; then ok="$m"; break; fi
+              rm -f /tmp/gradle.zip; sleep 8
+            done
+            [ -n "$ok" ] && break
           done
-          test -s /tmp/gradle.zip || { echo "::error::gradle download failed after retries"; exit 1; }
+          [ -n "$ok" ] || { echo "::error::gradle download failed on all mirrors"; exit 1; }
+          echo "got gradle from $ok"
           unzip -q -o /tmp/gradle.zip -d /opt
           echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
 
