@@ -1,28 +1,30 @@
 {
  "v": 1,
  "latest": {
-  "code": 12,
-  "name": "3.7.3.1",
-  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3.1/Orubus.apk",
-  "sha256": "977665a8b441421a8d41a265d88711d6fdf5afdfbd2b7f8f7a26815e43ed0f57",
-  "size": 18373118,
+  "code": 13,
+  "name": "3.7.4",
+  "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.4/Orubus.apk",
+  "sha256": "cdae3fe419c208068d08171d9aaa68c9317a2b8361be2676d462a6483394564e",
+  "size": 18373114,
   "components": [
    "core app",
-   "the setup flow",
-   "the updater"
+   "the api door",
+   "ads",
+   "the wallet"
   ],
-  "notes": "the setup screen gained OPEN TELEGRAM - one tap straight into @orubus_bot - and the continuing-means-you-agree-to-the-terms line; the updater got its own screen: live download percentage, resumable/idempotent work (close it, kill the app, come back - it picks up from the exact byte it stopped), the delta patch rebuilds on device and is byte-verified before install, and RETRY never starts from zero."
+  "notes": "the fix that matters: ads are live. the app was still dialing the old Vercel host \u2014 dead since the move to Cloudflare Pages \u2014 so every wallet, chat and ad call died at the door. v3.7.4 points the whole app at orubus-ai.pages.dev: rewarded ads work again (watch an ad, +20 SU, up to 4/day), the SU wallet, tasks and the shop reconnect. full APK or the 12\u219213 delta, both byte-verified before install."
  },
  "deltas": {
-  "11": {
-   "to": 12,
-   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.3.1/Orubus-11to12.bsdiff",
-   "sha256": "9f94ebac5c599784e9ca2af7edf3505b8c41a6973a44386df0ab8daaf0f20fa6",
-   "size": 3205754,
+  "12": {
+   "to": 13,
+   "url": "https://github.com/orubus-dev/orubus-app/releases/download/v3.7.4/Orubus-12to13.bsdiff",
+   "sha256": "60e4d9be73622edddd185bd6f0dc46202ff5ad13b4b08e6f238293c45ebf79cc",
+   "size": 3001480,
    "components": [
     "core app",
-    "the setup flow",
-    "the updater"
+    "the api door",
+    "ads",
+    "the wallet"
    ]
   }
  }
