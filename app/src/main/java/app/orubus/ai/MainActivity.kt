@@ -318,8 +318,14 @@ class MainActivity : Activity() {
                         btn.isEnabled = true; btn.text = "LINK"
                         if (ok) {
                             Store.prefs().edit().putString("cookie", Api.cookieValue).apply()
-                            Toast.makeText(this, "linked — welcome in ⚡", Toast.LENGTH_SHORT).show()
-                            enterMain()
+                            // first link on this device: register the unique
+                            // identity (name + handle) before the shell loads
+                            if (!Store.prefs().getBoolean("profile_done", false)) {
+                                showProfileSheet(after = { enterMain() })
+                            } else {
+                                Toast.makeText(this, "linked — welcome in ⚡", Toast.LENGTH_SHORT).show()
+                                enterMain()
+                            }
                         } else status.text = err
                     }
                 } catch (e: Exception) {
@@ -344,6 +350,76 @@ class MainActivity : Activity() {
         box.addView(later, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         screen.removeAllViews()
         screen.addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    // ---------- identity registration (name + handle, one per human) ----------
+
+    /**
+     * The registration card: pick a display name and a unique handle. Both
+     * land in the server's `users` registry against the signed session's
+     * Genjutsu identity — the same registry the Telegram /start flow writes,
+     * so one human stays one identity on every surface. Skippable, offered
+     * once; ⚙ → REGISTER reopens it any time.
+     */
+    internal fun showProfileSheet(after: (() -> Unit)? = null) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, 0)
+        }
+        fun field(hint: String): EditText = EditText(this).apply {
+            this.hint = hint; maxLines = 1; textSize = 15f
+            setTextColor(W.theme.ink); setHintTextColor(W.theme.dim)
+            typeface = W.medium(this@showProfileSheet)
+            background = W.stroke(this@showProfileSheet, W.theme.paper, 10)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        val nameIn = field("your name (what do I call you?)")
+        val userIn = field("your handle — letters, numbers, _")
+        box.addView(nameIn)
+        box.addView(userIn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        val status = W.label(this, "", 12.5f, W.theme.acc2)
+        status.setPadding(0, dp(10), 0, 0)
+        box.addView(status)
+
+        var dlgRef: AlertDialog? = null
+        val dlg = orubusDialog(
+            "🧬 REGISTER",
+            "one identity everywhere — the bots, the web and this app share it",
+            "REGISTER", "look around first",
+            bodyView = box,
+            cancelable = false,
+            stayOnPositive = true,
+            onPositive = {
+                val name = nameIn.text.toString().trim()
+                val handle = userIn.text.toString().trim().removePrefix("@")
+                if (name.isEmpty()) {
+                    status.text = "just one thing: what should I call you?"
+                    return@orubusDialog
+                }
+                if (handle.isNotEmpty() && !Regex("^[a-zA-Z0-9_]{3,20}$").matches(handle)) {
+                    status.text = "handles are 3-20 characters: letters, numbers, underscores"
+                    return@orubusDialog
+                }
+                status.text = "registering…"
+                Thread {
+                    val (ok, err) = Api.profile(name, handle)
+                    runOnUiThread {
+                        if (ok) {
+                            Store.prefs().edit().putBoolean("profile_done", true).apply()
+                            dlgRef?.dismiss()
+                            Toast.makeText(this, "you're registered, $name ⚡", Toast.LENGTH_SHORT).show()
+                            after?.invoke()
+                        } else {
+                            status.text = err
+                        }
+                    }
+                }.start()
+            },
+            onNegative = {
+                after?.invoke()
+            }
+        )
+        dlgRef = dlg
     }
 
     // ---------- main shell ----------
@@ -1433,6 +1509,7 @@ class MainActivity : Activity() {
         onPositive: (() -> Unit)? = null,
         onNegative: (() -> Unit)? = null,
         cancelable: Boolean = true,
+        stayOnPositive: Boolean = false,
     ): AlertDialog {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1463,7 +1540,10 @@ class MainActivity : Activity() {
         }
         val p = W.button(this, positive, if (danger) W.theme.acc2 else W.theme.acc, if (danger) W.theme.paper else W.theme.ink, radiusDp = 99, small = true)
         p.setOnClickListener {
-            dlg.dismiss()
+            // stayOnPositive: the handler decides when the card closes (a
+            // failed validation or a network call must not drop the user's
+            // typed input on the floor)
+            if (!stayOnPositive) dlg.dismiss()
             onPositive?.invoke()
         }
         row.addView(p, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
@@ -1775,6 +1855,12 @@ class MainActivity : Activity() {
         rows.addView(item("⚖", "LEGAL", "terms · privacy") { toggleSettings(false); openDetail("legal") })
         rows.addView(item("ℹ", "ABOUT", "who is orubus") { toggleSettings(false); openDetail("about") })
         rows.addView(item("📦", "APP VERSION · v${versionName()}", "check for updates — delta patches, no full downloads") { toggleSettings(false); checkForUpdate(true) })
+        if (!Store.prefs().getBoolean("profile_done", false) && Api.cookieValue.isNotBlank()) {
+            rows.addView(item("🧬", "REGISTER", "your name + handle — one identity everywhere") {
+                toggleSettings(false)
+                showProfileSheet()
+            })
+        }
         rows.addView(item("🪪", "IDENTITY", "link / log out") {
             toggleSettings(false)
             if (Api.cookieValue.isBlank()) showTokenScreen() else {

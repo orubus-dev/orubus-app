@@ -228,6 +228,23 @@ object Api {
         post("appdone", mapOf("token" to token, "answer" to answer))
     } catch (_: Exception) { null }
 
+    /**
+     * profile — register this human's unique identity: name + username,
+     * saved on the server against the signed session (the Genjutsu gid) and
+     * stitched to the Telegram row. One identity, every surface.
+     * Returns (ok, error) — error is empty on success.
+     */
+    fun profile(name: String, username: String): Pair<Boolean, String> = try {
+        val extra = LinkedHashMap<String, Any?>()
+        if (name.isNotBlank()) extra["name"] = name.trim()
+        if (username.isNotBlank()) extra["username"] = username.trim().removePrefix("@")
+        val r = post("profile", extra)
+        if (r.optBoolean("ok", false)) true to ""
+        else false to r.optString("error", "the registry didn't take it")
+    } catch (e: Exception) {
+        false to if (isNetErr(e)) "no connection right now — try again when you're back online" else "couldn't reach the registry"
+    }
+
     /** appfail: refund the turn (token burns — no refund-after-done). */
     fun appFail(token: String): JSONObject? = try {
         post("appfail", mapOf("token" to token))
