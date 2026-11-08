@@ -1,0 +1,27 @@
+name: keepalive
+
+# GitHub disables a repo's scheduled workflows after 60 days of no repo
+# activity. This daily no-op commit keeps the gateway stream scheduled
+# forever. [skip ci] keeps the android release workflow out of it.
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: daily keepalive commit
+        run: |
+          date -u +"keepalive %Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git config user.email "bot@orubus.dev"
+          git config user.name "orubus-keepalive"
+          git add .keepalive
+          git commit -m "keepalive [skip ci]" || echo "nothing to commit"
+          git push

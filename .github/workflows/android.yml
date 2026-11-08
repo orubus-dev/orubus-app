@@ -2,7 +2,8 @@ name: android
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths: ['app/**', 'gradle.properties', 'settings.gradle', 'build.gradle', 'VERSION', '.github/workflows/android.yml']
   workflow_dispatch:
     inputs:

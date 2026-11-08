@@ -1,0 +1,42 @@
+name: gateway-stream-b
+
+# Stream B — the ALWAYS-ON Discord gateway on real compute.
+# Stream A (Cloudflare Pages dc-gateway + the orubus-dc-gw cron worker) keeps
+# its 120s shifts; THIS stream holds proper long websocket sessions and hands
+# every DM/mention to the same brain through /api/dc-ingest. Public repo =
+# free unlimited Actions minutes. Concurrency keeps exactly one stream alive:
+# while a run holds the socket, newer scheduled runs queue (not cancel); when
+# it ends, the queued run starts within seconds.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-stream-b
+  cancel-in-progress: false
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22 (native WebSocket)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Hold the stream
+        env:
+          GATEWAY_KEY: ${{ secrets.GATEWAY_KEY }}
+          # 335 minutes of hold — the job cap is 360; the margin absorbs
+          # checkout + setup so the stream always ends CLEAN (unlock beats kill)
+          HOLD_MS: '20100000'
+        run: node gateway/gateway.mjs
