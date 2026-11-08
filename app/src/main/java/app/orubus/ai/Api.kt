@@ -6,12 +6,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * The one HTTP door. Everything talks to the deployed Vercel backend —
+ * The one HTTP door. Everything talks to the deployed Cloudflare Pages backend —
  * same /api/chat the web app uses: same wallet, same soul, same identity.
  * The session is the orubus_web cookie minted by the GENJ link step.
  */
 object Api {
-    const val BASE = "https://orubus-ai.vercel.app"
+    const val BASE = "https://orubus-ai.pages.dev"
     const val CHAT = "$BASE/api/chat"
     const val APP_REPO = "orubus-dev/orubus-app"
     const val APK_URL = "https://github.com/$APP_REPO/releases/latest/download/Orubus.apk"

@@ -220,7 +220,7 @@ class MainActivity : Activity() {
         }
         fetchPageText("/legal") { t ->
             text.text = if (t.isBlank())
-                "the full terms live at orubus-ai.vercel.app/legal — by agreeing you accept them: Soul Units are a virtual balance with no cash value, the service comes as-is, and you keep it kind."
+                "the full terms live at orubus-ai.pages.dev/legal — by agreeing you accept them: Soul Units are a virtual balance with no cash value, the service comes as-is, and you keep it kind."
             else t
         }
         val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
