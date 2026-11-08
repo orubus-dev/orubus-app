@@ -69,7 +69,7 @@ async function ingest(body) {
 
 /** Stream A holds the lock while its shift runs — wait briefly, then take it. */
 async function waitForLock() {
-  const deadline = Date.now() + 70_000
+  const deadline = Date.now() + 160_000 // cover a full 120s stream-A shift before overlapping
   while (Date.now() < deadline) {
     try {
       const r = await fetch(`${PAGES_BASE}/api/dc-gateway?key=${encodeURIComponent(KEY)}&status=1`, {
